@@ -48,9 +48,10 @@ param quick-jumps Bank A and B to the first bank of that library.
 
 > **Sample WAVs are not bundled in this repository** — they're
 > community-archived Mellotron recordings and not the author's to
-> redistribute. See *Loading your own banks* below for the formats Mello
-> accepts; the Leisureland and Mellotron-Archive sets are widely
-> available in the community.
+> redistribute. All three default sets — Leisureland, Sonic Bloom, and
+> the 90s Mellotron Archive CD — are **free downloads** circulated in
+> the Mellotron community. See *Loading your own banks* below for the
+> formats Mello accepts.
 
 ## Features
 
@@ -277,10 +278,11 @@ scripts/              — build, install, install_banks, Dockerfile
 MIT — see [LICENSE](LICENSE).
 
 The repository contains plugin code only — bundled WAV sample libraries
-are NOT included in the GitHub repository. If you supply your own WAVs
-(e.g. the Leisureland or 90s-Archive Mellotron sets, both circulated
-freely in the community for personal use), check the source's licensing
-terms before redistributing.
+are NOT included in the GitHub repository. The three default sample
+sets — Leisureland, Sonic Bloom, and the 90s Mellotron Archive CD — are
+all freely available downloads circulated in the Mellotron community.
+If you intend to redistribute the WAVs or use them commercially, check
+each source's licensing terms first.
 
 ---
 
