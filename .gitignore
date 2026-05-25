@@ -1,0 +1,28 @@
+# Build artefacts
+dist/
+build/
+*.so
+*.o
+*.a
+*.tar.gz
+
+# Sample WAV libraries — community-archived Mellotron content, not the
+# project's to redistribute. End users supply their own under
+# instruments/<library>/<bank>/. See README and LICENSE for sourcing.
+instruments/*/
+!instruments/.gitkeep
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Local config
+*.local
+.env

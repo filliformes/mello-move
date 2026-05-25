@@ -1,0 +1,104 @@
+{
+  "id": "mello",
+  "name": "Mello",
+  "version": "0.1.0",
+  "api_version": 2,
+  "description": "Dual-bank tape instrument. Mellotron x Casio SK-1 x Kiviak WoFi. Folder-of-WAVs banks, deep tape/preamp modelling, 8-macro FX rack.",
+  "author": "Vincent Fillion (Filliformes)",
+  "abbrev": "MELLO",
+  "dsp": "dsp.so",
+  "component_type": "sound_generator",
+  "capabilities": {
+    "audio_out": true,
+    "midi_in": true,
+    "chainable": true,
+    "component_type": "sound_generator",
+    "ui_hierarchy": {
+      "modes": null,
+      "levels": {
+        "root": {
+          "name": "Mello",
+          "knobs": ["bank_a","bank_b","ab_mix","pitch","tone","env_preset","crunch","volume"],
+          "params": [
+            {"level": "Main",     "label": "Main"},
+            {"level": "FX",       "label": "FX"},
+            {"level": "Envelope", "label": "Envelope"},
+            {"level": "Tape",     "label": "Tape & Preamp"}
+          ]
+        },
+        "Main": {
+          "label": "Main",
+          "knobs": ["bank_a","bank_b","ab_mix","pitch","tone","env_preset","crunch","volume"],
+          "params": [
+            "sample_lib",
+            "bank_a","bank_b","ab_mix","pitch","tone","env_preset","crunch","volume",
+            "reverse","half_speed","sample_start","xfade_pct",
+            "loop_mode","map_mode","auto_retune","seq_base"
+          ]
+        },
+        "Envelope": {
+          "label": "Envelope",
+          "knobs": ["env_preset","env_a","env_d","env_s","env_r","env_ac","env_rc","env_vel"],
+          "params": ["env_preset","env_a","env_d","env_s","env_r","env_ac","env_rc","env_vel"]
+        },
+        "Tape": {
+          "label": "Tape & Preamp",
+          "knobs": ["tape_style","warble","flutter","degrade","tape_sat","preamp_model","input_level","limiter"],
+          "params": ["tape_style","warble","flutter","degrade","tape_sat","preamp_model","input_level","limiter","tape_len","chiff","bias","mech"]
+        },
+        "FX": {
+          "label": "FX",
+          "knobs": ["autowah","vibrato","tremolo","rotary","dj_filter","texture","delay","reverb"],
+          "params": ["fx_chain","autowah","vibrato","tremolo","rotary","dj_filter","texture","delay","reverb"]
+        }
+      }
+    },
+    "chain_params": [
+      {"key": "sample_lib",    "name": "Samples Folder", "type": "enum", "options": ["(empty)"]},
+      {"key": "bank_a",        "name": "Bank A",     "type": "enum",  "options": ["(empty)"]},
+      {"key": "bank_b",        "name": "Bank B",     "type": "enum",  "options": ["(empty)"]},
+      {"key": "ab_mix",        "name": "A Mix B",    "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "pitch",         "name": "Pitch",      "type": "int",   "min": -24, "max": 24, "step": 1},
+      {"key": "tone",          "name": "Tone",       "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "env_preset",    "name": "Envelope",   "type": "enum",  "options": ["Tape Organ","Strings","Slow Pad","Choir Swell","Pluck","Stab","Bowed Swell","Gate","Reverse Swell","Staccato","Drone","Soft Keys","Cinematic Rise","Pluck Bass","Soft Lead","Pad Wash","Marcato","Hammer","Vox Ahh","Brass Hit","Slow Drone","Pizzicato","Custom"]},
+      {"key": "crunch",        "name": "Crunch",     "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "volume",        "name": "Volume",     "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "env_a",         "name": "Attack",     "type": "float", "min": 0,   "max": 5,  "step": 0.01},
+      {"key": "env_d",         "name": "Decay",      "type": "float", "min": 0,   "max": 3,  "step": 0.01},
+      {"key": "env_s",         "name": "Sustain",    "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "env_r",         "name": "Release",    "type": "float", "min": 0,   "max": 5,  "step": 0.01},
+      {"key": "env_ac",        "name": "Atk Curve",  "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "env_rc",        "name": "Rel Curve",  "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "env_vel",       "name": "Velocity",   "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "tape_style",    "name": "Tape Style", "type": "enum",  "options": ["Off","Clean","M400","MkII","M300","Worn"]},
+      {"key": "warble",        "name": "Warble",     "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "flutter",       "name": "Flutter",    "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "degrade",       "name": "Degrade",    "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "tape_sat",      "name": "Saturation", "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "preamp_model",  "name": "Preamp",     "type": "enum",  "options": ["Off","Clean DI","MkII Tube","M400 Solid-State","SK-1 Lo-fi"]},
+      {"key": "input_level",   "name": "Input",      "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "limiter",       "name": "Limiter",    "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "tape_len",      "name": "Tape Len",   "type": "float", "min": 1,   "max": 16, "step": 0.5},
+      {"key": "chiff",         "name": "Chiff",      "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "vibrato",       "name": "Vibrato",    "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "rotary",        "name": "Rotary",     "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "dj_filter",     "name": "DJ Filter",  "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "tremolo",       "name": "Tremolo",    "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "autowah",       "name": "Auto-Wah",   "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "texture",       "name": "Texturizer", "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "delay",         "name": "Delay",      "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "reverb",        "name": "Reverb",     "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "fx_chain",      "name": "FX Chain",   "type": "enum",  "options": ["Classic","Pedalboard","Wet Swirl","Ambient Wash","Dub","Reverse"]},
+      {"key": "map_mode",      "name": "Map Mode",   "type": "enum",  "options": ["Tape (exact)","Full range (stretched)"]},
+      {"key": "loop_mode",     "name": "Loop Mode",  "type": "enum",  "options": ["Tape (no loop)","Sustain (loop)"]},
+      {"key": "half_speed",    "name": "Half Speed", "type": "enum",  "options": ["Off","On"]},
+      {"key": "xfade_pct",     "name": "Crossfade %","type": "int",   "min": 0,   "max": 100,"step": 1},
+      {"key": "auto_retune",   "name": "Auto Retune","type": "enum",  "options": ["Off","On"]},
+      {"key": "seq_base",      "name": "Seq Base",   "type": "int",   "min": -1,  "max": 127,"step": 1},
+      {"key": "reverse",       "name": "Reverse",    "type": "enum",  "options": ["Off","On"]},
+      {"key": "sample_start",  "name": "Sample Start","type": "float","min": 0,   "max": 1,  "step": 0.01},
+      {"key": "bias",          "name": "Bias",       "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "mech",          "name": "Mech Noise", "type": "float", "min": 0,   "max": 1,  "step": 0.01}
+    ]
+  }
+}

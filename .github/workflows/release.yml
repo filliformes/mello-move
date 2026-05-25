@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify version match (tag vs module.json)
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          JSON_VER=$(grep -oP '"version"\s*:\s*"\K[^"]+' src/module.json | head -1)
+          echo "tag=$TAG  module.json=$JSON_VER"
+          if [ "$TAG" != "$JSON_VER" ]; then
+            echo "::error::tag $TAG != module.json $JSON_VER"; exit 1
+          fi
+      - name: Build ARM64 module via Docker
+        run: |
+          chmod +x scripts/build.sh
+          bash scripts/build.sh
+      - name: Verify tarball contains expected version
+        run: |
+          tar -xzOf dist/mello-module.tar.gz mello/module.json | grep '"version"'
+      - name: Update release.json
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          REPO="${{ github.repository }}"
+          URL="https://github.com/$REPO/releases/download/v$VERSION/mello-module.tar.gz"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')
+          git fetch origin "$BRANCH"
+          git checkout -f "$BRANCH"
+          echo "{\"version\": \"$VERSION\", \"download_url\": \"$URL\"}" > release.json
+          git add release.json
+          git commit -m "chore: update release.json for v$VERSION [skip ci]" || echo "no change"
+          git push origin "$BRANCH"
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/mello-module.tar.gz
+            dist/mello/dsp.so
+            dist/mello/module.json
