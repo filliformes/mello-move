@@ -1,7 +1,7 @@
 # Mello
 
 **Dual-bank tape instrument for [Ableton Move](https://www.ableton.com/move/).**
-Mellotron × Casio SK-1 × Kiviak WoFi.
+My dream super Mellotron.
 
 Built for the [Schwung](https://github.com/charlesvestal/schwung) framework
 ([Move Everything](https://moveeverything.com)). Part of the open-source
