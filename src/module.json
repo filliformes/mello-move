@@ -1,7 +1,7 @@
 {
   "id": "mello",
   "name": "Mello",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "api_version": 2,
   "description": "Dual-bank tape instrument. Mellotron x Casio SK-1 x Kiviak WoFi. Folder-of-WAVs banks, deep tape/preamp modelling, 8-macro FX rack.",
   "author": "Vincent Fillion (Filliformes)",
