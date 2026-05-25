@@ -34,24 +34,32 @@ Mello's `instruments/` folder is organised by **library**:
 
 ```
 instruments/
-  LL/                          ← Leisureland set (community archive)
-  SB/                          ← Sonic Bloom Mellotron pack
-  90/                          ← 90s Mellotron Archive CD
+  MT/                          ← MellowTrawn — complete Leisureland archive (129 banks)
+  SB/                          ← Sonic Bloom Mellotron pack (23 banks)
+  90/                          ← 90s Mellotron Archive CD (28 banks, curated 35-note slice)
+  LL/                          ← (legacy) Leisureland subset — recognised but optional
   YourCustomSet/               ← drop your own here
 ```
 
-A free-circulation Leisureland Mellotron set, the Sonic Bloom Mellotron
-pack, and a curated 35-note slice of the 90s Mellotron Archive CD work
-out of the box (~85 banks, ~3000 WAVs total). The plugin auto-discovers
-any library folder you create — switching the **Samples Folder** menu
-param quick-jumps Bank A and B to the first bank of that library.
+Three default sample libraries, ~180 banks, ~6 600 WAVs — the same Mellotron
+material recorded by three independent transfers, so you get genuinely
+different sonic personalities for each instrument. Switching the
+**Samples Folder** menu param quick-jumps Bank A and B to the first
+bank of that library. The plugin auto-discovers any library folder you
+create.
+
+**MT vs LL**: Up through v0.1.1 the canonical Leisureland library was
+`LL/`, a 34-bank curated subset. Starting v0.1.2 the default Leisureland
+library is `MT/` (MellowTrawn), the full 129-bank archive. The plugin
+still recognises a folder named `LL/` for anyone whose existing setup
+uses that name — both work, no breakage.
 
 > **Sample WAVs are not bundled in this repository** — they're
 > community-archived Mellotron recordings and not the author's to
-> redistribute. All three default sets — Leisureland, Sonic Bloom, and
-> the 90s Mellotron Archive CD — are **free downloads** circulated in
-> the Mellotron community. See *Loading your own banks* below for the
-> formats Mello accepts.
+> redistribute. All three default sets — MellowTrawn (Leisureland),
+> Sonic Bloom, and the 90s Mellotron Archive CD — are **free downloads**
+> circulated in the Mellotron community. See *Loading your own banks*
+> below for the formats Mello accepts.
 
 ## Features
 

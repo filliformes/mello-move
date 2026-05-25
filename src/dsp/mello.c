@@ -3027,25 +3027,45 @@ static void *create_instance(const char *id, const char *cfg) {
     mello_list_banks(m->instruments_root, &m->lib_list);
     scan_all_libraries(m);
 
-    /* Prefer "LL" (Leisureland, short code) as the boot library so the
-     * v0.1.x factory feel is preserved; fall back to whatever sorted
-     * first.  Library folders are now named with short codes (LL / SB /
-     * 90) so the prefixed bank entries in the chain_params enum stay
-     * short enough to read on the Move's 360-pixel display. */
-    int default_lib = 0;
-    for (int i = 0; i < m->lib_list.count; i++)
-        if (!strcmp(m->lib_list.names[i], "LL")) { default_lib = i; break; }
-    activate_sample_library(m, default_lib);
-    /* Default boot bank: SB/MK2 Flute — Sonic Bloom's MK2 Flute sounds
-     * notably better than Leisureland's equivalent, so it's the boot
-     * default starting v0.1.31.  Falls back to first bank of the default
-     * library if SB isn't installed. */
-    int default_bank = m->lib_first_idx[default_lib];
+    /* Boot bank preference: SB/MK2 Flute first (Sonic Bloom's MK2 Flute
+     * sounds notably better than the Leisureland version, so it's the
+     * sonic anchor).  Fall back to the first bank in any library that
+     * exists if SB isn't installed. */
+    int default_bank = 0;
     for (int i = 0; i < m->blist.count; i++) {
         if (!strcmp(m->blist.names[i], "SB/MK2 Flute")) { default_bank = i; break; }
     }
     m->p_bank_a = default_bank;
     m->p_bank_b = default_bank;
+
+    /* Samples Folder preference: try "MT" (full MellowTrawn / Leisureland
+     * archive, 129 banks) first, then "LL" (legacy Leisureland subset,
+     * 34 banks — kept as a recognised name so anyone who organised their
+     * own Leisureland folder pre-v0.1.2 keeps working).  Whichever wins
+     * is overridden below so the displayed Samples Folder matches the
+     * actual default bank's library — keeps the UI consistent (no
+     * "folder says MT, bank is from SB" confusion). */
+    int default_lib = 0;
+    static const char *LIB_PREFERENCE[] = { "MT", "LL", NULL };
+    int found = 0;
+    for (int p = 0; LIB_PREFERENCE[p] && !found; p++) {
+        for (int i = 0; i < m->lib_list.count; i++) {
+            if (!strcmp(m->lib_list.names[i], LIB_PREFERENCE[p])) {
+                default_lib = i; found = 1; break;
+            }
+        }
+    }
+    /* If a real default bank was picked (e.g. SB/MK2 Flute), point the
+     * Samples Folder param at that bank's owning library so the menu
+     * label and the playing bank agree. */
+    for (int i = 0; i < m->lib_list.count; i++) {
+        int lo = m->lib_first_idx[i];
+        int hi = (i + 1 < (int)(sizeof(m->lib_first_idx)/sizeof(int)))
+                 ? m->lib_first_idx[i + 1]
+                 : m->blist.count;
+        if (default_bank >= lo && default_bank < hi) { default_lib = i; break; }
+    }
+    activate_sample_library(m, default_lib);
 
     /* preload bank A (and B if different from A) — SYNCHRONOUS for the
      * initial load so the first note has samples ready. */
