@@ -3,8 +3,7 @@
 **Dual-bank tape instrument for [Ableton Move](https://www.ableton.com/move/).**
 My dream super Mellotron.
 
-Built for the [Schwung](https://github.com/charlesvestal/schwung) framework
-([Move Everything](https://moveeverything.com)). Part of the open-source
+Built for the [Schwung](https://github.com/charlesvestal/schwung) framework. Part of the open-source
 lutherie banner **Filliformes**.
 
 > Physical-model Rotary speaker. Per-style tape saturation. Crybaby-style
