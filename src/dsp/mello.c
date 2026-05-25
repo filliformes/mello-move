@@ -75,22 +75,38 @@ static const char *MAP_MODES[]     = { "Tape (exact)","Full range (stretched)" }
 static const char *LOOP_MODES[]    = { "Tape (no loop)","Sustain (loop)" };
 static const char *ONOFF[]         = { "Off","On" };
 
-/* FX chain orderings — each preset routes the 8 effect units in a
- * different sequence.  Order changes timbre dramatically because some FX
- * (reverb, delay, texture) generate audio the downstream FX then sweep.
- *   Classic       = current order (mod → filter → time)
- *   Pedalboard    = wah → mod stack → filter → time
- *   Wet Swirl     = time first, then mod sweeps the wet tail
- *   Ambient Wash  = delay+reverb upfront so every later effect colours the
- *                   wash; texture/wah/leslie act on the smeared field
- *   Dub           = dub-console workflow — filter the dry, send to time,
- *                   then modulate the late tail
- *   Reverse       = reverb FIRST so the dry note bakes immediately, end
- *                   with texture grain-chopping the fully-effected signal */
+/* FX chain orderings — each preset routes the FX 1 chain (8 macros) plus
+ * the FX 2 page's distortion + Frippertronics in a different sequence.
+ * Order changes timbre dramatically because some FX (reverb, delay,
+ * texture, fripp) generate audio that downstream FX then sweep.
+ *
+ *   v0.1 originals (0-5), retuned to include dist + fripp:
+ *     Classic       — mod → filter → time → dist+fripp → reverb
+ *     Pedalboard    — wah → mod stack → filter → time → dist+fripp → reverb
+ *     Wet Swirl     — time first, then mod sweeps the wet tail
+ *     Ambient Wash  — delay+reverb upfront, everything else colours the wash
+ *     Dub           — dub-console workflow: filter dry → time → modulate tail
+ *     Reverse       — reverb FIRST, last stage is texture grain-chop
+ *
+ *   v0.2 new chains (6-9) — built around the new FX 2 effects:
+ *     Frippertronics — dist+fripp dominates: long self-osc loops, lush wash
+ *     Wall of Orchestra — Mellotron-classic with modern teeth (Eno wall)
+ *     Loop Chaos     — generative modulated chaos (wavefold + fripp + leslie)
+ *     Dirty Cabinet  — guitar-amp-into-spring sim (SansAmp DI flavour) */
 static const char *FX_CHAIN_MODES[] = {
-    "Classic", "Pedalboard", "Wet Swirl", "Ambient Wash", "Dub", "Reverse"
+    "Classic", "Pedalboard", "Wet Swirl", "Ambient Wash", "Dub", "Reverse",
+    "Frippertronics", "Wall of Orchestra", "Loop Chaos", "Dirty Cabinet"
 };
-#define FX_CHAIN_COUNT 6
+#define FX_CHAIN_COUNT 10
+
+/* dist_position: where the distortion stage sits relative to Frippertronics.
+ *   Pre     — dist → fripp     (each repeat is an echo of the distorted signal)
+ *   In-Loop — dist → fripp + fripp's feedback path adds extra in-loop saturation
+ *             (runaway distortion grows over repeats — the Frippertronics
+ *             "dirt accumulates" character)
+ *   Post    — fripp → dist     (clean delays then distort the stack of repeats) */
+static const char *DIST_POSITIONS[] = { "Pre", "In-Loop", "Post" };
+#define DIST_POSITION_COUNT 3
 
 /* envelope preset table {a, d, s, r, atk_curve, rel_curve, vel}.
  * Curve values: 0 = log (fast-start), 0.5 = linear, 1 = exp (slow-start). */
@@ -306,6 +322,170 @@ typedef struct {
 } fx_state_t;
 
 /* ============================================================================
+ * FX 2 page — Multi-style distortion + 3-mode Frippertronics tape delay
+ *
+ * Distortion: 5 sonically-distinct shapers chosen so NONE duplicates the
+ * existing Mello tape stage (cubic / asym-tanh) or preamp models:
+ *
+ *   0 — Tube      → strong-asymmetry tanh w/ DC bias (different range from MkII)
+ *   1 — Fuzz      → high-gain hard soft-clip + asymmetric knee
+ *   2 — Crimson   → Klon-style asymmetric diode pair (Si top / Ge bottom)
+ *   3 — Wavefold  → Buchla-style iterated triangle reflection (4 folds)
+ *   4 — Bitcrush  → digital SR-hold decimation + bit-depth quantization
+ *
+ * Each style is auto-level-matched via running RMS comparison (Plaits +
+ * Super Boum drive-mix pattern, lines 565-572 of superboom.c) so the Drive
+ * knob never raises perceived loudness.
+ *
+ * Frippertronics: three legendary tape-delay voicings ported VERBATIM from
+ * KrautDrums (krautdrums.c lines 778-853), buffer bumped from 2 sec to 8 sec
+ * for true Frippertronics-scale loops, and feedback caps raised so every
+ * voicing can self-oscillate:
+ *
+ *   0 — Tape      → Maestro Echoplex EP-3   (single head, FET-preamp bright)
+ *   1 — Magnetic  → Binson Echorec          (4-tap drum, tube warmth)
+ *   2 — Space     → Roland RE-201 Space Echo (3-tap tape, modulated)
+ *
+ * Per-voicing fb_cap kept just above unity (1.02–1.05) so the tanh inside
+ * the feedback loop bounds the runaway → controlled steady-state self-osc
+ * even on Tape and Magnetic modes.  Each delay has its own self-osc
+ * character driven by its tap configuration + saturation curve.
+ *
+ * Age knob compounds three things on top of the voicing's base values:
+ *   - HF rolloff (darker repeats)
+ *   - Saturation drive (more harmonic colour)
+ *   - Wow + flutter depth (more transport instability)
+ * One knob, three correlated parameters — "this tape unit was made in 1965
+ * and never serviced".
+ * ============================================================================ */
+
+/* ---------- shared helpers ---------- */
+static inline int clampi(int x, int lo, int hi) {
+    return x < lo ? lo : (x > hi ? hi : x);
+}
+
+/* ---------- Frippertronics delay ---------- */
+#define FRIPP_BUF_SIZE  384000     /* 8 sec stereo @ 48k — Frippertronics scale */
+#define FRIPP_MAX_TAPS  4
+
+typedef struct {
+    int   num_taps;
+    float tap_ratios[FRIPP_MAX_TAPS];   /* multipliers of base delay samples   */
+    float tap_levels[FRIPP_MAX_TAPS];   /* mix levels (sum normalized inline)  */
+    float wow_depth_ms;
+    float flutter_depth_ms;
+    int   wow_shape;                    /* 0=sine, 1=drum-eccentric (Echorec)  */
+    float hf_rolloff_coef;              /* one-pole LPF coef in feedback       */
+    float lf_rolloff_coef;              /* one-pole HPF coef in feedback       */
+    float sat_drive;                    /* pre-tanh gain                       */
+    float sat_asymmetry;                /* DC bias for 2nd-harmonic content    */
+    float fb_cap;                       /* hard cap on feedback (>1 = self-osc)*/
+    float bump_freq, bump_q, bump_gain_db;   /* wet head-bump peaking biquad   */
+} fripp_voicing_t;
+
+/* Three vintage voicings — calibrated from schematics + LTSpice measurements.
+ * (Source: KrautDrums commit history + Echoplex/Echorec/RE-201 service docs.) */
+static const fripp_voicing_t FRIPP_VOICINGS[3] = {
+    /* 0 — Echoplex EP-3 (Tape) — DEFAULT
+     * Single tape head, FET preamp peak ~+4 dB at 9.5 kHz, light AC-coupling
+     * LF cut. Mild even-harmonic asymmetry from FET clipping. fb_cap raised
+     * from KrautDrums' 0.93 to 1.03 so Frippertronics loops will hold. */
+    {
+        .num_taps = 1,
+        .tap_ratios = {1.0f, 0.0f, 0.0f, 0.0f},
+        .tap_levels = {1.0f, 0.0f, 0.0f, 0.0f},
+        .wow_depth_ms = 0.45f, .flutter_depth_ms = 0.10f, .wow_shape = 0,
+        .hf_rolloff_coef = 0.55f, .lf_rolloff_coef = 0.012f,
+        .sat_drive = 1.4f, .sat_asymmetry = 0.08f,
+        .fb_cap = 1.03f,
+        .bump_freq = 9500.0f, .bump_q = 1.2f, .bump_gain_db = 4.0f,
+    },
+    /* 1 — Binson Echorec (Magnetic)
+     * Multi-tap magnetic drum, 4 fixed heads at 25/50/75/100% ratios. Tube
+     * preamp adds mild 4 kHz mid-bump. Drum-eccentricity wobble = dual-sine
+     * LFO. fb_cap raised from KrautDrums' 0.91 to 1.02. */
+    {
+        .num_taps = 4,
+        .tap_ratios = {0.25f, 0.50f, 0.75f, 1.00f},
+        .tap_levels = {0.55f, 0.70f, 0.85f, 1.00f},
+        .wow_depth_ms = 0.08f, .flutter_depth_ms = 0.04f, .wow_shape = 1,
+        .hf_rolloff_coef = 0.32f, .lf_rolloff_coef = 0.008f,
+        .sat_drive = 1.7f, .sat_asymmetry = 0.18f,
+        .fb_cap = 1.02f,
+        .bump_freq = 4000.0f, .bump_q = 0.9f, .bump_gain_db = 1.5f,
+    },
+    /* 2 — Roland RE-201 Space Echo (Space)
+     * 3 fixed heads + free-floating tape transport → most-modulated of the
+     * three. Solid-state preamp, audible tape compression. ORIGINAL 1.05
+     * fb_cap retained — this is the legendary RE-201 self-osc build-up. */
+    {
+        .num_taps = 3,
+        .tap_ratios = {0.333f, 0.667f, 1.0f, 0.0f},
+        .tap_levels = {0.65f, 0.82f, 1.0f, 0.0f},
+        .wow_depth_ms = 0.65f, .flutter_depth_ms = 0.18f, .wow_shape = 0,
+        .hf_rolloff_coef = 0.45f, .lf_rolloff_coef = 0.010f,
+        .sat_drive = 1.85f, .sat_asymmetry = 0.05f,
+        .fb_cap = 1.05f,
+        .bump_freq = 6000.0f, .bump_q = 0.7f, .bump_gain_db = 0.5f,
+    },
+};
+
+static const char *FRIPP_TYPES[] = { "Tape", "Magnetic", "Space" };
+#define FRIPP_TYPE_COUNT 3
+
+typedef struct {
+    float buf_l[FRIPP_BUF_SIZE];
+    float buf_r[FRIPP_BUF_SIZE];
+    int   write_idx;
+    /* Per-channel feedback path filter states (one-pole HPF + LPF) */
+    float fb_lpf_l, fb_lpf_r;
+    float fb_hpf_l, fb_hpf_r;
+    /* Wow + flutter LFO phases (smooth sine 0.6 Hz wow, 6.5 Hz flutter) */
+    float wow_phase;
+    float flutter_phase;
+    /* Wet head-bump peaking biquads — recomputed when voicing changes */
+    biquad_t bump_l, bump_r;
+    int   active_voicing;        /* -1 = uninitialised, triggers biquad calc */
+    /* Per-sample-smoothed shadows so knob moves don't jump tap positions */
+    float time_smooth;           /* fractional samples — base delay time     */
+    float fb_smooth;             /* feedback amount (0..1, pre-fb_cap)       */
+} fripp_state_t;
+
+/* ---------- Distortion (FX 2 page, 7 styles) ----------
+ * Order is meaningful: a clean ladder from soft → hard → digital, so a
+ * user sweeping the Style enum hears progressive aggression:
+ *   Tube → Spiral → RAT → Tube Screamer-zone → Fuzz → Crimson → Wavefold → Bitcrush
+ *
+ * Spiral & RAT (positions 5 & 6) are ported from Airwindows MIT sources:
+ *   Spiral  — Chris Johnson's sin(x·|x|)/|x| guitar-amp shaper with
+ *             sample-delayed presence blend (Spiral2Proc.cpp character)
+ *   RAT     — Drive's iterative polynomial cascade modelling stacked
+ *             transistor stages (DriveProc.cpp character)
+ */
+static const char *DIST_STYLES[] = {
+    "Tube", "Fuzz", "Crimson", "Wavefold", "Bitcrush", "Spiral", "RAT"
+};
+#define DIST_STYLE_COUNT 7
+
+typedef struct {
+    /* RMS envelope followers — ~150 ms time constant (rms_c = 0.005) for
+     * Plaits/Super Boum-style drive-mix wet-to-dry level matching. */
+    float pre_rms_l, pre_rms_r;
+    float post_rms_l, post_rms_r;
+    /* SR-reduction (Bitcrush) state — sample-and-hold */
+    float sr_hold_l, sr_hold_r;
+    float sr_phase;
+    /* Tone tilt — one-pole LP and HP states */
+    float tone_lp_l, tone_lp_r;
+    float tone_hp_l, tone_hp_r;
+    /* Spiral sample-delayed presence state (one float per channel) — the
+     * Airwindows Spiral2 "presence" path blends sin(x·|x|)/|x| against the
+     * same shaping applied to the PREVIOUS sample, giving the signature
+     * one-sample-smear analog-pedal character. */
+    float spiral_prev_l, spiral_prev_r;
+} dist_state_t;
+
+/* ============================================================================
  * Instance
  * ============================================================================ */
 typedef struct {
@@ -393,6 +573,20 @@ typedef struct {
           p_delay, p_reverb;
     int   p_fx_chain;             /* enum FX_CHAIN_MODES — routing order */
 
+    /* FX 2 page — Distortion (knobs 1-4) */
+    int   p_dist_style;           /* enum DIST_STYLES (7 styles) */
+    float p_dist_drive;           /* 0..1 — amount of clipping/folding/crush */
+    float p_dist_tone;            /* 0..1, 0.5 = flat (tilts post-shaper LP/HP) */
+    float p_dist_blend;           /* 0..1 — equal-power dry/wet */
+    int   p_dist_position;        /* enum DIST_POSITIONS (Pre/In-Loop/Post) */
+
+    /* FX 2 page — Frippertronics tape delay (knobs 5-8) */
+    int   p_fripp_type;           /* enum FRIPP_TYPES (Tape/Magnetic/Space) */
+    float p_fripp_time;           /* 0..1 — exponential 10ms..8s, 1s at ~25% knob */
+    float p_fripp_fb;             /* 0..1 — feedback, scaled by voicing's fb_cap */
+    float p_fripp_age;            /* 0..1 — compounds HF rolloff + sat + wow depth */
+    float p_fripp_mix;            /* 0..1 — equal-power dry/wet */
+
     /* Menu-only */
     int   p_map_mode;
     int   p_loop_mode;
@@ -417,6 +611,10 @@ typedef struct {
           sm_delay, sm_reverb;
     float sm_bias, sm_mech, sm_chiff;
 
+    /* FX 2 smoothed companions */
+    float sm_dist_drive, sm_dist_tone, sm_dist_blend;
+    float sm_fripp_age,  sm_fripp_mix;
+
     /* ---- FX state ---- */
     delay_state_t   dly;
     vibrato_state_t vib;
@@ -425,6 +623,8 @@ typedef struct {
     texture_state_t tex;
     reverb_state_t  rev;
     fx_state_t      fx;
+    fripp_state_t   fripp;
+    dist_state_t    dist;
 
 } mello_t;
 
@@ -2175,6 +2375,402 @@ static void fx_reverb(mello_t *m, float *l, float *r, int frames) {
 }
 
 /* ============================================================================
+ * FX 2 page — Distortion (5 sonically-distinct shapers)
+ *
+ * Each shaper kernel takes one sample + a drive scalar, returns the saturated
+ * value bounded approximately to [-1, +1].  The post-shaper signal is then
+ * tone-tilted (LP→HP one-poles), RMS-matched to the dry signal (so Drive
+ * never raises perceived loudness), and equal-power crossfaded with dry.
+ * ============================================================================ */
+
+/* (1) Tube — strong-asymmetric tanh with DC bias.  Distinct from MkII tape
+ *      sat by deeper drive range (up to 3×) and larger asymmetry constant
+ *      (0.25 vs MkII's per-sample asym).  Generates pronounced 2nd harmonic. */
+static inline float dist_tube(float x, float drive) {
+    float biased = x * drive + 0.25f;
+    return fast_tanh(biased) - fast_tanh(0.25f);     /* DC remove */
+}
+
+/* (2) Fuzz — high-pre-gain asymmetric hard clip with knees.
+ *      Distinct from any tanh-based shaper: discontinuous derivative at the
+ *      knees gives the recognisable fuzz-pedal bite.  Asymmetry creates an
+ *      octave-up flavour at high drive. */
+static inline float dist_fuzz(float x, float drive) {
+    float y = x * drive * 4.0f;
+    if (y >  0.8f) y =  0.8f + (y - 0.8f) * 0.05f;   /* top knee */
+    if (y < -0.7f) y = -0.7f + (y + 0.7f) * 0.05f;   /* asym bottom knee */
+    return y * 0.9f;
+}
+
+/* (3) Crimson — antiparallel diode pair (Klon-style asymmetry).
+ *      Upper diode: Si-like soft compression above 0 (1 / (1+0.5y) rolloff).
+ *      Lower diode: Ge-like harder clamp below -0.5.  Sonically distinct
+ *      from tanh (no smooth-everywhere derivative) and from fuzz (asymmetric
+ *      character even at low drive). */
+static inline float dist_crimson(float x, float drive) {
+    float y = x * drive * 2.0f;
+    if (y > 0.0f) {
+        y = y / (1.0f + 0.5f * y);                    /* Si soft compress */
+    } else if (y < -0.5f) {
+        y = -0.5f - (y + 0.5f) * 0.1f;                /* Ge hard knee */
+    }
+    return y * 0.85f;
+}
+
+/* (4) Wavefold — Buchla-style iterated triangle reflection.
+ *      At drive > 1 the signal folds at ±1 thresholds; high drive can fold
+ *      4 times producing dense odd-harmonic stacks.  Sonically distinct
+ *      from any clipping curve: NO saturation, just reflection — at low
+ *      drive sounds like a chorus-pitched signal, at high drive metallic. */
+static inline float dist_wavefold(float x, float drive) {
+    float y = x * drive * 1.8f;
+    for (int k = 0; k < 4; k++) {
+        if      (y >  1.0f) y =  2.0f - y;
+        else if (y < -1.0f) y = -2.0f - y;
+        else break;
+    }
+    return y * 0.7f;
+}
+
+/* (6) Spiral — Airwindows Spiral2 shaper, sin(x·|x|)/|x| with sample-
+ *      delayed presence blend.  Iconic guitar-amp character: harmonically
+ *      rich, slightly brittle, "spiraling" upward harmonic stack.  Distinct
+ *      from any tanh because the curve's slope depends on instantaneous |x|.
+ *      `prev` is per-channel state (caller passes &m->dist.spiral_prev_l/r).
+ *      MIT — Chris Johnson, airwindows/airwindows/.../Spiral2Proc.cpp.       */
+static inline float dist_spiral(float x, float drive, float *prev) {
+    /* Mild input gain — Spiral's natural sweet spot is in [-1.2, 1.2] */
+    float in = x * (1.0f + drive * 1.5f);
+    if (in >  1.5f) in =  1.5f;
+    if (in < -1.5f) in = -1.5f;
+    float ax  = fabsf(in);            if (ax  < 1e-6f) ax  = 1e-6f;
+    float apx = fabsf(*prev);         if (apx < 1e-6f) apx = 1e-6f;
+    float now  = sinf(in    * ax)  / ax;     /* main spiral on current sample */
+    float dly  = sinf(*prev * apx) / apx;    /* same shape on PREVIOUS sample */
+    *prev = in;
+    /* Presence weight = drive — pure spiral at drive=0, max delayed-blend at 1 */
+    return now * (1.0f - drive) + dly * drive;
+}
+
+/* (7) RAT — Airwindows Drive iterative polynomial cascade (DriveProc.cpp).
+ *      Modelled on ProCo RAT / SansAmp DI: stacked transistor gain stages
+ *      with inter-stage rolloff.  Each loop iteration adds another stage
+ *      of (1 - (|x|·g)²) · (1+g) — produces dense midrange-focused drive
+ *      with growing sustain at higher Drive.  MIT — Chris Johnson.           */
+static inline float dist_rat(float x, float drive) {
+    if (x >  1.5f) x =  1.5f;
+    if (x < -1.5f) x = -1.5f;
+    float total = drive * 6.0f + 0.2f;        /* 0.2..6.2 total drive */
+    const float step = 1.0f;
+    int iters = 0;
+    while (total > step && iters++ < 8) {
+        total -= step;
+        float k = fabsf(x) * step;
+        x -= x * k * k;
+        x *= (1.0f + step);
+    }
+    /* Final partial stage */
+    float k = fabsf(x) * total;
+    x -= x * k * k;
+    x *= (1.0f + total);
+    /* Soft-clip the asymptote — multi-stage cascade can push past ±1 */
+    return fast_tanh(x * 0.9f);
+}
+
+/* (5) Bitcrush — purely digital character (sample-rate-hold + bit-depth
+ *      quantization).  No tanh anywhere.  Drive maps to both crush amount
+ *      (lower bit depth) and rate reduction (longer hold).  Most "broken"
+ *      of the 5 styles; sonically nothing like the others. */
+static inline float dist_bitcrush_step(float x, float drive,
+                                       float *hold, float *phase,
+                                       float rate_step) {
+    *phase += rate_step;
+    if (*phase >= 1.0f) {
+        *phase -= 1.0f;
+        float bits = 12.0f - drive * 10.0f;             /* 12 down to 2 bits */
+        if (bits < 2.0f) bits = 2.0f;
+        float levels = powf(2.0f, bits) * 0.5f;
+        *hold = roundf(x * levels) / levels;
+    }
+    return *hold;
+}
+
+static void fx_distortion(mello_t *m, float *l, float *r, int frames) {
+    /* ALWAYS-RUN behaviour: even when blend is near zero we still update
+     * the RMS trackers so the moment the user dials in distortion the
+     * level-match doesn't take 150ms to converge. */
+    int   style = clampi(m->p_dist_style, 0, DIST_STYLE_COUNT - 1);
+    float drive = clampf(m->sm_dist_drive, 0.0f, 1.0f);
+    float tone  = clampf(m->sm_dist_tone,  0.0f, 1.0f);
+    float blend = clampf(m->sm_dist_blend, 0.0f, 1.0f);
+
+    /* Tone tilt: dark = LP @ ~800 Hz, bright = HP @ ~700 Hz.  Centre = flat. */
+    float tone_lp_coef = clampf(0.04f + (1.0f - tone) * 0.30f, 0.04f, 0.34f);
+    float tone_hp_coef = clampf(0.005f + tone * 0.05f, 0.005f, 0.055f);
+
+    /* Bitcrush phase increment — drive 0..1 → SR/2 down to SR/24 */
+    float bc_rate = 0.5f - drive * 0.46f;
+
+    /* Equal-power dry/wet — lift out of inner loop since blend is
+     * per-block smoothed (smooth_param called in render_block). */
+    float ang   = blend * (float)M_PI * 0.5f;
+    float dry_g = cosf(ang);
+    float wet_g = sinf(ang);
+
+    const float rms_c = 0.005f;     /* ~150 ms RMS envelope time constant */
+
+    for (int i = 0; i < frames; i++) {
+        float in_l = l[i], in_r = r[i];
+
+        /* Pre-shaper RMS for drive-mix level matching */
+        m->dist.pre_rms_l += rms_c * (fabsf(in_l) - m->dist.pre_rms_l) + 1e-25f;
+        m->dist.pre_rms_r += rms_c * (fabsf(in_r) - m->dist.pre_rms_r) + 1e-25f;
+
+        float wet_l, wet_r;
+        switch (style) {
+        case 0:
+            wet_l = dist_tube    (in_l, 0.5f + drive * 2.5f);
+            wet_r = dist_tube    (in_r, 0.5f + drive * 2.5f);
+            break;
+        case 1:
+            wet_l = dist_fuzz    (in_l, 0.5f + drive * 1.5f);
+            wet_r = dist_fuzz    (in_r, 0.5f + drive * 1.5f);
+            break;
+        case 2:
+            wet_l = dist_crimson (in_l, 0.5f + drive * 2.0f);
+            wet_r = dist_crimson (in_r, 0.5f + drive * 2.0f);
+            break;
+        case 3:
+            wet_l = dist_wavefold(in_l, 0.5f + drive * 3.0f);
+            wet_r = dist_wavefold(in_r, 0.5f + drive * 3.0f);
+            break;
+        case 4:
+            wet_l = dist_bitcrush_step(in_l, drive, &m->dist.sr_hold_l,
+                                       &m->dist.sr_phase, bc_rate);
+            wet_r = dist_bitcrush_step(in_r, drive, &m->dist.sr_hold_r,
+                                       &m->dist.sr_phase, bc_rate);
+            break;
+        case 5:    /* Spiral — Airwindows Spiral2 character */
+            wet_l = dist_spiral(in_l, drive, &m->dist.spiral_prev_l);
+            wet_r = dist_spiral(in_r, drive, &m->dist.spiral_prev_r);
+            break;
+        case 6:    /* RAT — Airwindows Drive cascade */
+            wet_l = dist_rat(in_l, drive);
+            wet_r = dist_rat(in_r, drive);
+            break;
+        default:   /* shouldn't reach — clamped by clampi above */
+            wet_l = in_l; wet_r = in_r;
+            break;
+        }
+
+        /* Tone tilt — one-pole LP then one-pole HP (subtract LP-of-signal) */
+        m->dist.tone_lp_l += tone_lp_coef * (wet_l - m->dist.tone_lp_l) + 1e-25f;
+        m->dist.tone_lp_r += tone_lp_coef * (wet_r - m->dist.tone_lp_r) + 1e-25f;
+        wet_l = m->dist.tone_lp_l;
+        wet_r = m->dist.tone_lp_r;
+        m->dist.tone_hp_l += tone_hp_coef * (wet_l - m->dist.tone_hp_l) + 1e-25f;
+        m->dist.tone_hp_r += tone_hp_coef * (wet_r - m->dist.tone_hp_r) + 1e-25f;
+        wet_l -= m->dist.tone_hp_l;
+        wet_r -= m->dist.tone_hp_r;
+
+        /* Post-shaper RMS */
+        m->dist.post_rms_l += rms_c * (fabsf(wet_l) - m->dist.post_rms_l) + 1e-25f;
+        m->dist.post_rms_r += rms_c * (fabsf(wet_r) - m->dist.post_rms_r) + 1e-25f;
+
+        /* Drive-mix wet-to-dry energy compensation (Super Boum lines 565-572,
+         * Plaits Overdrive's `post_gain = 1/SoftClip(...)` made explicit).
+         * Cap at 4× so a momentarily quiet shaper output doesn't blast. */
+        float comp_l = m->dist.pre_rms_l / (m->dist.post_rms_l + 1e-9f);
+        float comp_r = m->dist.pre_rms_r / (m->dist.post_rms_r + 1e-9f);
+        if (comp_l > 4.0f) comp_l = 4.0f;
+        if (comp_r > 4.0f) comp_r = 4.0f;
+        wet_l *= comp_l;
+        wet_r *= comp_r;
+
+        l[i] = in_l * dry_g + wet_l * wet_g;
+        r[i] = in_r * dry_g + wet_r * wet_g;
+    }
+}
+
+/* ============================================================================
+ * FX 2 page — Frippertronics tape delay (3 voicings: Tape/Magnetic/Space)
+ *
+ * Ported from KrautDrums' delay_process (krautdrums.c lines 1462-1545).  Mello
+ * additions on top of the verbatim port:
+ *   - Buffer bumped from 2 sec to 8 sec (FRIPP_BUF_SIZE = 384000)
+ *   - fb_caps raised so Tape (1.03) and Magnetic (1.02) can self-oscillate
+ *     alongside Space (1.05) — every voicing can hold a Frippertronics loop
+ *   - Age knob compounds HF rolloff + sat drive + wow depth on top of the
+ *     voicing's base values (one knob, three correlated parameters)
+ *   - Exponential Time curve hitting ~1 sec at 25% knob (knob^0.25 mapping)
+ * ============================================================================ */
+
+static inline int fripp_samples_from_norm(float time_norm) {
+    /* Curve: t = 10ms * (800)^(knob^0.25)
+     *   knob=0.00 →   10 ms
+     *   knob=0.25 →   ~1.0 sec
+     *   knob=0.50 →   ~2.8 sec
+     *   knob=1.00 →    8.0 sec
+     * The quarter-root shaping makes the bottom of the knob travel cover the
+     * long-time range fast (Frippertronics user request: "1 sec by 25%"). */
+    float shaped = powf(clampf(time_norm, 0.0f, 1.0f), 0.25f);
+    float t = 0.010f * powf(800.0f, shaped);
+    int n = (int)(t * SR);
+    if (n < 16) n = 16;
+    if (n >= FRIPP_BUF_SIZE / 2) n = FRIPP_BUF_SIZE / 2;
+    return n;
+}
+
+/* Asymmetric tanh-based saturation with DC removal — verbatim from KrautDrums
+ * delay_saturate.  Drive scales the tanh argument; asym adds a DC bias that
+ * the post-tanh subtraction removes, leaving 2nd-harmonic content. */
+static inline float fripp_saturate(float x, float drive, float asym) {
+    float biased = x * drive + asym;
+    float clipped = fast_tanh(biased);
+    return (clipped - fast_tanh(asym)) / drive;
+}
+
+/* Linear-interpolated fractional read from the circular buffer */
+static inline float fripp_tap_read(const float *buf, float read_pos) {
+    while (read_pos <  0.0f)                   read_pos += (float)FRIPP_BUF_SIZE;
+    while (read_pos >= (float)FRIPP_BUF_SIZE)  read_pos -= (float)FRIPP_BUF_SIZE;
+    int   idx0 = (int)read_pos;
+    float frac = read_pos - (float)idx0;
+    int   idx1 = idx0 + 1;
+    if (idx1 >= FRIPP_BUF_SIZE) idx1 = 0;
+    return buf[idx0] * (1.0f - frac) + buf[idx1] * frac;
+}
+
+static void fx_frippertronics(mello_t *m, float *l, float *r, int frames) {
+    fripp_state_t *d = &m->fripp;
+    int voicing_idx = clampi(m->p_fripp_type, 0, FRIPP_TYPE_COUNT - 1);
+    const fripp_voicing_t *v = &FRIPP_VOICINGS[voicing_idx];
+
+    /* In-Loop distortion: when dist_position == 1 ("In-Loop"), add extra
+     * saturation to the feedback path so repeats grow dirty over time.
+     * Uses a simple tanh-based shaper (not the full multi-style fx_distortion)
+     * — drive is scaled by dist_blend * dist_drive so the user controls it
+     * via the same Distortion knobs.  When NOT In-Loop, in_loop_drive is 0
+     * and the extra saturation is a no-op.                                    */
+    float in_loop_drive = 0.0f;
+    if (m->p_dist_position == 1) {
+        in_loop_drive = clampf(m->sm_dist_drive * m->sm_dist_blend, 0.0f, 1.0f);
+    }
+
+    /* Recompute wet head-bump biquad when voicing changes (or on first call) */
+    if (d->active_voicing != voicing_idx) {
+        biquad_set_peaking(&d->bump_l, v->bump_freq, v->bump_q, v->bump_gain_db);
+        biquad_set_peaking(&d->bump_r, v->bump_freq, v->bump_q, v->bump_gain_db);
+        d->active_voicing = voicing_idx;
+    }
+
+    /* Age compounding — derive effective values from voicing + age */
+    float age      = clampf(m->sm_fripp_age, 0.0f, 1.0f);
+    float eff_hf   = v->hf_rolloff_coef  * (1.0f - age * 0.7f);   /* darker */
+    float eff_sat  = v->sat_drive        * (1.0f + age * 0.6f);   /* more drive */
+    float eff_wow  = v->wow_depth_ms     * (1.0f + age * 2.0f);   /* more wobble */
+    float eff_flut = v->flutter_depth_ms * (1.0f + age * 1.5f);
+
+    /* Wow LFO — slow (0.6 Hz sine, or 0.45 Hz drum-eccentric for Magnetic) */
+    float wow_rate = (v->wow_shape == 1) ? 0.45f : 0.6f;
+    d->wow_phase += wow_rate * (float)frames * SR_INV;
+    if (d->wow_phase > 1.0f) d->wow_phase -= 1.0f;
+    float wow_lfo;
+    if (v->wow_shape == 1) {
+        /* Magnetic drum: fundamental + 30% 2nd harmonic out of phase */
+        float p = d->wow_phase * TWO_PI;
+        wow_lfo = (sinf(p) + 0.30f * sinf(p * 2.0f + 1.0f)) * 0.77f;
+    } else {
+        wow_lfo = sinf(d->wow_phase * TWO_PI);
+    }
+
+    /* Flutter LFO ~6.5 Hz — representative per-block value (audible
+     * inaccuracy is sub-sample, not worth per-sample sinf cost) */
+    d->flutter_phase += 6.5f * (float)frames * SR_INV;
+    if (d->flutter_phase > 1.0f) d->flutter_phase -= 1.0f;
+    float flutter_lfo = sinf(d->flutter_phase * TWO_PI);
+
+    float wow_samps     = (eff_wow  * 0.001f * SR) * wow_lfo;
+    float flutter_samps = (eff_flut * 0.001f * SR) * flutter_lfo;
+    float mod = wow_samps + flutter_samps;
+
+    /* Target time + feedback, smoothed per-sample below for capstan inertia.
+     * Matches existing fx_delay's sm_c constant (~60 ms time-constant @ 48k). */
+    float target_samples = (float)fripp_samples_from_norm(m->p_fripp_time);
+    float target_fb      = clampf(m->p_fripp_fb, 0.0f, 1.0f);
+    const float sm_c     = 0.0007f;
+
+    /* Precompute tap normalisation so the wet level is voicing-invariant */
+    float total_level = 0.0f;
+    for (int t = 0; t < v->num_taps; t++) total_level += v->tap_levels[t];
+    float tap_norm = (total_level > 0.0f) ? 1.0f / total_level : 1.0f;
+
+    /* Equal-power dry/wet — lift out of inner loop (mix is per-block smoothed) */
+    float mix   = clampf(m->sm_fripp_mix, 0.0f, 1.0f);
+    float ang   = mix * (float)M_PI * 0.5f;
+    float dry_g = cosf(ang);
+    float wet_g = sinf(ang);
+
+    for (int i = 0; i < frames; i++) {
+        /* Per-sample slew for time + feedback (no zipper, capstan-like) */
+        d->time_smooth += sm_c * (target_samples - d->time_smooth);
+        d->fb_smooth   += sm_c * (target_fb      - d->fb_smooth);
+
+        float in_l = l[i], in_r = r[i];
+        float base_delay = d->time_smooth;
+
+        /* Sum read taps with combined wow+flutter mod */
+        float echo_l = 0.0f, echo_r = 0.0f;
+        for (int t = 0; t < v->num_taps; t++) {
+            float tap_d = base_delay * v->tap_ratios[t] + mod;
+            if (tap_d < 1.0f) tap_d = 1.0f;
+            float rpos = (float)d->write_idx - tap_d;
+            echo_l += fripp_tap_read(d->buf_l, rpos) * v->tap_levels[t];
+            echo_r += fripp_tap_read(d->buf_r, rpos) * v->tap_levels[t];
+        }
+        echo_l *= tap_norm;
+        echo_r *= tap_norm;
+
+        /* Wet head-bump peaking biquad (per-voicing preamp signature) */
+        float wet_l = biquad_proc(&d->bump_l, echo_l);
+        float wet_r = biquad_proc(&d->bump_r, echo_r);
+
+        /* Feedback path: HPF (AC-couple) → LPF (HF generation loss) → tanh sat */
+        d->fb_hpf_l += v->lf_rolloff_coef * (echo_l - d->fb_hpf_l) + 1e-25f;
+        d->fb_hpf_r += v->lf_rolloff_coef * (echo_r - d->fb_hpf_r) + 1e-25f;
+        float hp_l = echo_l - d->fb_hpf_l;
+        float hp_r = echo_r - d->fb_hpf_r;
+        d->fb_lpf_l += eff_hf * (hp_l - d->fb_lpf_l) + 1e-25f;
+        d->fb_lpf_r += eff_hf * (hp_r - d->fb_lpf_r) + 1e-25f;
+        float sat_l = fripp_saturate(d->fb_lpf_l, eff_sat, v->sat_asymmetry);
+        float sat_r = fripp_saturate(d->fb_lpf_r, eff_sat, v->sat_asymmetry);
+
+        /* In-Loop dist position: extra tanh saturation in the feedback path.
+         * Compounds with the per-voicing saturation, so each repeat picks up
+         * additional dirt — runaway distortion grows over the loop.          */
+        if (in_loop_drive > 0.001f) {
+            float extra_drive = 1.0f + in_loop_drive * 2.5f;
+            sat_l = fast_tanh(sat_l * extra_drive) * (1.0f / extra_drive) * 1.2f;
+            sat_r = fast_tanh(sat_r * extra_drive) * (1.0f / extra_drive) * 1.2f;
+        }
+
+        /* Feedback cap: voicing's fb_cap is just above unity for the loop
+         * to hold (tanh inside the loop is what bounds the runaway).        */
+        float fb_eff = d->fb_smooth * v->fb_cap;
+
+        /* Cross-feedback (ping-pong stereo movement) */
+        d->buf_l[d->write_idx] = in_l + sat_r * fb_eff;
+        d->buf_r[d->write_idx] = in_r + sat_l * fb_eff;
+        d->write_idx++;
+        if (d->write_idx >= FRIPP_BUF_SIZE) d->write_idx = 0;
+
+        /* Equal-power wet/dry */
+        l[i] = in_l * dry_g + wet_l * wet_g;
+        r[i] = in_r * dry_g + wet_r * wet_g;
+    }
+}
+
+/* ============================================================================
  * Limiter (output protection)
  * ============================================================================ */
 static void apply_limiter(mello_t *m, float *l, float *r, int frames) {
@@ -2207,7 +2803,7 @@ static void apply_limiter(mello_t *m, float *l, float *r, int frames) {
  * ============================================================================ */
 enum reg_type { T_F, T_I, T_E };
 typedef struct { const char *key; int type; void *p; const char **opt; int nopt; } reg_t;
-#define R_COUNT 48
+#define R_COUNT 64    /* bumped from 48 for v0.2 FX 2 page (9 new params + headroom) */
 
 static void build_registry(mello_t *m, reg_t *r, int *n) {
     int i = 0;
@@ -2239,6 +2835,18 @@ static void build_registry(mello_t *m, reg_t *r, int *n) {
     RF("sample_start", p_sample_start);
     RF("bias", p_bias);
     RF("mech", p_mech);
+    /* v0.2 FX 2 page — Distortion (knobs 1-4) + position menu param */
+    RE("dist_style",    p_dist_style,    DIST_STYLES,    DIST_STYLE_COUNT);
+    RF("dist_drive",    p_dist_drive);
+    RF("dist_tone",     p_dist_tone);
+    RF("dist_blend",    p_dist_blend);
+    RE("dist_position", p_dist_position, DIST_POSITIONS, DIST_POSITION_COUNT);
+    /* v0.2 FX 2 page — Frippertronics tape delay (knobs 5-8 + delay_type menu) */
+    RE("delay_type", p_fripp_type, FRIPP_TYPES, FRIPP_TYPE_COUNT);
+    RF("fripp_time", p_fripp_time);
+    RF("fripp_fb",   p_fripp_fb);
+    RF("fripp_age",  p_fripp_age);
+    RF("fripp_mix",  p_fripp_mix);
     #undef RF
     #undef RI
     #undef RE
@@ -2253,9 +2861,12 @@ static int enum_index(const char **opt, int n, const char *val) {
 }
 
 static int page_from_level(const char *v) {
-    /* v0.1.15 reorder: FX is now menu 2, Envelope menu 3 (was the other
-     * way round).  Tape & Preamp stays last on menu 4. */
-    if (!strcmp(v, "FX")) return 1;
+    /* v0.1.15 reorder: FX is menu 2, Envelope menu 3, Tape & Preamp menu 4.
+     * v0.1.5 split: FX → FX 1 + FX 2.  Legacy "FX" still routes to FX 1
+     * (page 1) so any stored patch from v0.1 keeps working.  FX 2 is the
+     * new page 4 — Envelope and Tape get pushed down by one. */
+    if (!strcmp(v, "FX 1") || !strcmp(v, "FX")) return 1;
+    if (!strcmp(v, "FX 2")) return 4;
     if (!strcmp(v, "Envelope")) return 2;
     if (!strcmp(v, "Tape") || !strcmp(v, "Tape & Preamp")) return 3;
     return 0;
@@ -2263,10 +2874,17 @@ static int page_from_level(const char *v) {
 
 static const char *KNOB_MAIN[8] = {"bank_a","bank_b","ab_mix","pitch","tone","env_preset","crunch","volume"};
 static const char *KNOB_FX  [8] = {"autowah","vibrato","tremolo","rotary","dj_filter","texture","delay","reverb"};
+static const char *KNOB_FX2 [8] = {"dist_drive","dist_style","dist_tone","dist_blend","fripp_time","fripp_fb","fripp_age","fripp_mix"};
 static const char *KNOB_ENV [8] = {"env_preset","env_a","env_d","env_s","env_r","env_ac","env_rc","env_vel"};
 static const char *KNOB_TAPE[8] = {"tape_style","warble","flutter","degrade","tape_sat","preamp_model","input_level","limiter"};
 static const char *const *page_knobs(int p) {
-    switch (p) { case 1: return KNOB_FX; case 2: return KNOB_ENV; case 3: return KNOB_TAPE; default: return KNOB_MAIN; }
+    switch (p) {
+        case 1: return KNOB_FX;     /* FX 1 — the original 8-macro chain  */
+        case 2: return KNOB_ENV;
+        case 3: return KNOB_TAPE;
+        case 4: return KNOB_FX2;    /* FX 2 — distortion + Frippertronics */
+        default: return KNOB_MAIN;
+    }
 }
 
 static void apply_env_preset(mello_t *m, int idx) {
@@ -2391,13 +3009,24 @@ static void set_param(void *inst, const char *key, const char *val) {
     }
 }
 
-/* ---- ui_hierarchy is served from get_param (sound generator rule) ---- */
+/* ---- ui_hierarchy is served from get_param (sound generator rule) ----
+ * v0.1.5: FX page split into FX 1 (the original 8-macro chain) and FX 2
+ * (4 distortion + 4 Frippertronics knobs).  Root now lists 5 sub-menus
+ * instead of 4.  Legacy patches that referenced the old "FX" level key
+ * still work via a backwards-compat alias in page_from_level. */
 static const char *UI_HIERARCHY =
 "{\"modes\":null,\"levels\":{"
  "\"root\":{\"name\":\"Mello\",\"knobs\":[\"bank_a\",\"bank_b\",\"ab_mix\",\"pitch\",\"tone\",\"env_preset\",\"crunch\",\"volume\"],"
-   "\"params\":[{\"level\":\"Main\",\"label\":\"Main\"},{\"level\":\"FX\",\"label\":\"FX\"},{\"level\":\"Envelope\",\"label\":\"Envelope\"},{\"level\":\"Tape\",\"label\":\"Tape & Preamp\"}]},"
+   "\"params\":["
+     "{\"level\":\"Main\",\"label\":\"Main\"},"
+     "{\"level\":\"FX 1\",\"label\":\"FX 1\"},"
+     "{\"level\":\"FX 2\",\"label\":\"FX 2\"},"
+     "{\"level\":\"Envelope\",\"label\":\"Envelope\"},"
+     "{\"level\":\"Tape\",\"label\":\"Tape & Preamp\"}"
+   "]},"
  "\"Main\":{\"label\":\"Main\",\"knobs\":[\"bank_a\",\"bank_b\",\"ab_mix\",\"pitch\",\"tone\",\"env_preset\",\"crunch\",\"volume\"],\"params\":[\"sample_lib\",\"bank_a\",\"bank_b\",\"ab_mix\",\"pitch\",\"tone\",\"env_preset\",\"crunch\",\"volume\",\"reverse\",\"half_speed\",\"sample_start\",\"xfade_pct\",\"loop_mode\",\"map_mode\",\"auto_retune\",\"seq_base\"]},"
- "\"FX\":{\"label\":\"FX\",\"knobs\":[\"autowah\",\"vibrato\",\"tremolo\",\"rotary\",\"dj_filter\",\"texture\",\"delay\",\"reverb\"],\"params\":[\"fx_chain\",\"autowah\",\"vibrato\",\"tremolo\",\"rotary\",\"dj_filter\",\"texture\",\"delay\",\"reverb\"]},"
+ "\"FX 1\":{\"label\":\"FX 1\",\"knobs\":[\"autowah\",\"vibrato\",\"tremolo\",\"rotary\",\"dj_filter\",\"texture\",\"delay\",\"reverb\"],\"params\":[\"fx_chain\",\"autowah\",\"vibrato\",\"tremolo\",\"rotary\",\"dj_filter\",\"texture\",\"delay\",\"reverb\"]},"
+ "\"FX 2\":{\"label\":\"FX 2\",\"knobs\":[\"dist_drive\",\"dist_style\",\"dist_tone\",\"dist_blend\",\"fripp_time\",\"fripp_fb\",\"fripp_age\",\"fripp_mix\"],\"params\":[\"dist_style\",\"dist_drive\",\"dist_tone\",\"dist_blend\",\"dist_position\",\"delay_type\",\"fripp_time\",\"fripp_fb\",\"fripp_age\",\"fripp_mix\"]},"
  "\"Envelope\":{\"label\":\"Envelope\",\"knobs\":[\"env_preset\",\"env_a\",\"env_d\",\"env_s\",\"env_r\",\"env_ac\",\"env_rc\",\"env_vel\"],\"params\":[\"env_preset\",\"env_a\",\"env_d\",\"env_s\",\"env_r\",\"env_ac\",\"env_rc\",\"env_vel\"]},"
  "\"Tape\":{\"label\":\"Tape & Preamp\",\"knobs\":[\"tape_style\",\"warble\",\"flutter\",\"degrade\",\"tape_sat\",\"preamp_model\",\"input_level\",\"limiter\"],\"params\":[\"tape_style\",\"warble\",\"flutter\",\"degrade\",\"tape_sat\",\"preamp_model\",\"input_level\",\"limiter\",\"tape_len\",\"chiff\",\"bias\",\"mech\"]}"
 "}}";
@@ -2463,7 +3092,7 @@ static int build_chain_params_json(const mello_t *m, char *buf, int buf_len) {
         "{\"key\":\"texture\",\"name\":\"Texturizer\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
         "{\"key\":\"delay\",\"name\":\"Delay\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
         "{\"key\":\"reverb\",\"name\":\"Reverb\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
-        "{\"key\":\"fx_chain\",\"name\":\"FX Chain\",\"type\":\"enum\",\"options\":[\"Classic\",\"Pedalboard\",\"Wet Swirl\",\"Ambient Wash\",\"Dub\",\"Reverse\"]},"
+        "{\"key\":\"fx_chain\",\"name\":\"FX Chain\",\"type\":\"enum\",\"options\":[\"Classic\",\"Pedalboard\",\"Wet Swirl\",\"Ambient Wash\",\"Dub\",\"Reverse\",\"Frippertronics\",\"Wall of Orchestra\",\"Loop Chaos\",\"Dirty Cabinet\"]},"
         "{\"key\":\"map_mode\",\"name\":\"Map Mode\",\"type\":\"enum\",\"options\":[\"Tape (exact)\",\"Full range (stretched)\"]},"
         "{\"key\":\"loop_mode\",\"name\":\"Loop Mode\",\"type\":\"enum\",\"options\":[\"Tape (no loop)\",\"Sustain (loop)\"]},"
         "{\"key\":\"half_speed\",\"name\":\"Half Speed\",\"type\":\"enum\",\"options\":[\"Off\",\"On\"]},"
@@ -2473,7 +3102,19 @@ static int build_chain_params_json(const mello_t *m, char *buf, int buf_len) {
         "{\"key\":\"reverse\",\"name\":\"Reverse\",\"type\":\"enum\",\"options\":[\"Off\",\"On\"]},"
         "{\"key\":\"sample_start\",\"name\":\"Sample Start\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
         "{\"key\":\"bias\",\"name\":\"Bias\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
-        "{\"key\":\"mech\",\"name\":\"Mech Noise\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01}"
+        "{\"key\":\"mech\",\"name\":\"Mech Noise\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
+        /* ── v0.2 FX 2 page — Distortion (7 styles, Airwindows Spiral + RAT included) */
+        "{\"key\":\"dist_style\",\"name\":\"Dist Style\",\"type\":\"enum\",\"options\":[\"Tube\",\"Fuzz\",\"Crimson\",\"Wavefold\",\"Bitcrush\",\"Spiral\",\"RAT\"]},"
+        "{\"key\":\"dist_drive\",\"name\":\"Dist Drive\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
+        "{\"key\":\"dist_tone\",\"name\":\"Dist Tone\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
+        "{\"key\":\"dist_blend\",\"name\":\"Dist Blend\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
+        "{\"key\":\"dist_position\",\"name\":\"Dist Position\",\"type\":\"enum\",\"options\":[\"Pre\",\"In-Loop\",\"Post\"]},"
+        /* ── v0.2 FX 2 page — Frippertronics tape delay (3 voicings) */
+        "{\"key\":\"delay_type\",\"name\":\"Delay Type\",\"type\":\"enum\",\"options\":[\"Tape\",\"Magnetic\",\"Space\"]},"
+        "{\"key\":\"fripp_time\",\"name\":\"Fripp Time\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
+        "{\"key\":\"fripp_fb\",\"name\":\"Fripp Feedback\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
+        "{\"key\":\"fripp_age\",\"name\":\"Fripp Age\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
+        "{\"key\":\"fripp_mix\",\"name\":\"Fripp Mix\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01}"
         "]");
     return p;
 }
@@ -2652,6 +3293,28 @@ static void smooth_param(float *sm, float target, float coeff) {
     *sm += coeff * (target - *sm);
 }
 
+/* ============================================================================
+ * Chain helper: applies fx_distortion + fx_frippertronics in the order
+ * dictated by `dist_position`.  Called from inside each chain mode case so
+ * the new FX 2 effects integrate naturally with the existing FX 1 routing.
+ *   Pre     — dist → fripp                              (echoes of distortion)
+ *   In-Loop — dist → fripp(+in-loop sat)                (dirt grows over loop)
+ *   Post    — fripp → dist                              (distort the stack)
+ * fx_frippertronics reads m->p_dist_position internally to decide whether
+ * to apply the extra in-loop saturation, so we just sequence the buffer
+ * calls here.
+ * ============================================================================ */
+static void chain_apply_dist_fripp(mello_t *m, float *l, float *r, int frames) {
+    int pos = m->p_dist_position;       /* 0=Pre, 1=In-Loop, 2=Post */
+    if (pos == 2) {                      /* Post: fripp then dist */
+        fx_frippertronics(m, l, r, frames);
+        fx_distortion    (m, l, r, frames);
+    } else {                              /* Pre or In-Loop: dist then fripp */
+        fx_distortion    (m, l, r, frames);
+        fx_frippertronics(m, l, r, frames);
+    }
+}
+
 static void render_block(void *inst, int16_t *out_lr, int frames) {
     mello_t *m = (mello_t *)inst;
     if (!m || !out_lr || frames <= 0) { if (out_lr) memset(out_lr, 0, sizeof(int16_t) * 2 * (size_t)frames); return; }
@@ -2685,6 +3348,12 @@ static void render_block(void *inst, int16_t *out_lr, int frames) {
     smooth_param(&m->sm_bias,      m->p_bias,      SC);
     smooth_param(&m->sm_mech,      m->p_mech,      SC);
     smooth_param(&m->sm_chiff,     m->p_chiff,     SC);
+    /* v0.2 FX 2 page — Distortion + Frippertronics smoothed params */
+    smooth_param(&m->sm_dist_drive, m->p_dist_drive, SC);
+    smooth_param(&m->sm_dist_tone,  m->p_dist_tone,  SC);
+    smooth_param(&m->sm_dist_blend, m->p_dist_blend, SC);
+    smooth_param(&m->sm_fripp_age,  m->p_fripp_age,  SC);
+    smooth_param(&m->sm_fripp_mix,  m->p_fripp_mix,  SC);
 
     /* aftertouch flutter naturally decays back toward 0 (pressure release) */
     m->at_flutter *= 0.97f;
@@ -2792,37 +3461,44 @@ static void render_block(void *inst, int16_t *out_lr, int frames) {
     }
 
     /* FX chain — routing order chosen by the FX-page `fx_chain` menu.
-     * Every effect always RUNS (always-on state, keeps no-click behaviour);
-     * the order changes which one tints which.  Each preset is
-     * meaningfully distinct so an ear-test reveals the difference. */
+     * Every effect always RUNS (always-on state, keeps no-click behaviour).
+     * v0.1.5: dist + fripp inserted via chain_apply_dist_fripp() at the
+     * point that makes musical sense per chain.  6 v0.1 chains updated to
+     * accommodate; 4 new chains built around the FX 2 effects. */
     switch (m->p_fx_chain) {
     case 1: /* Pedalboard — wah opens, then the full mod stack (vibrato,
-             *              tremolo, leslie), grain texture, then EQ
-             *              filter, finally delay+reverb */
+             *              tremolo, leslie), grain texture, EQ filter,
+             *              dist+fripp (the new "pedals at end of chain"),
+             *              then delay+reverb wet stage. */
         fx_autowah  (m, l_buf, r_buf, frames);
         fx_vibrato  (m, l_buf, r_buf, frames);
         fx_tremolo  (m, l_buf, r_buf, frames);
         fx_leslie   (m, l_buf, r_buf, frames);
         fx_texture  (m, l_buf, r_buf, frames);
         fx_dj_filter(m, l_buf, r_buf, frames);
+        chain_apply_dist_fripp(m, l_buf, r_buf, frames);
         fx_delay    (m, l_buf, r_buf, frames);
         fx_reverb   (m, l_buf, r_buf, frames);
         break;
-    case 2: /* Wet Swirl — time early, then mod sweeps the wet tail */
+    case 2: /* Wet Swirl — time early, then mod sweeps the wet tail.
+             *             dist+fripp slot between time and mod so the
+             *             saturated taps get swept by the modulation. */
         fx_texture  (m, l_buf, r_buf, frames);
         fx_delay    (m, l_buf, r_buf, frames);
         fx_reverb   (m, l_buf, r_buf, frames);
+        chain_apply_dist_fripp(m, l_buf, r_buf, frames);
         fx_vibrato  (m, l_buf, r_buf, frames);
         fx_leslie   (m, l_buf, r_buf, frames);
         fx_autowah  (m, l_buf, r_buf, frames);
         fx_dj_filter(m, l_buf, r_buf, frames);
         fx_tremolo  (m, l_buf, r_buf, frames);
         break;
-    case 3: /* Ambient Wash — delay+reverb up front, everything else colours
-             *                the wash (radical: cathedral that's also a
-             *                Leslie cabinet and a wah pedal) */
+    case 3: /* Ambient Wash — delay+reverb up front, dist+fripp dropped in
+             *                BEFORE the modulation sweeps so the wash
+             *                becomes a saturated soup that mod modulates. */
         fx_delay    (m, l_buf, r_buf, frames);
         fx_reverb   (m, l_buf, r_buf, frames);
+        chain_apply_dist_fripp(m, l_buf, r_buf, frames);
         fx_texture  (m, l_buf, r_buf, frames);
         fx_vibrato  (m, l_buf, r_buf, frames);
         fx_leslie   (m, l_buf, r_buf, frames);
@@ -2830,30 +3506,27 @@ static void render_block(void *inst, int16_t *out_lr, int frames) {
         fx_dj_filter(m, l_buf, r_buf, frames);
         fx_tremolo  (m, l_buf, r_buf, frames);
         break;
-    case 4: /* Dub — dub-console workflow.  DJ filter carves the dry signal
-             *      first (HP-sweep an organ note for that filtered-stab
-             *      effect), then delay+reverb generate the wet field, and
-             *      modulation breathes life into the late tail.  Texture
-             *      sits last so any granular shimmer feeds off the
-             *      filtered-and-delayed signal. */
+    case 4: /* Dub — dub-console workflow.  DJ filter carves dry, time
+             *      generates the wet field, dist+fripp brings extra dirt
+             *      and a SECOND time-domain layer, modulation breathes
+             *      life into the late tail.  Two delay stages stacked! */
         fx_dj_filter(m, l_buf, r_buf, frames);
         fx_delay    (m, l_buf, r_buf, frames);
         fx_reverb   (m, l_buf, r_buf, frames);
+        chain_apply_dist_fripp(m, l_buf, r_buf, frames);
         fx_tremolo  (m, l_buf, r_buf, frames);
         fx_vibrato  (m, l_buf, r_buf, frames);
         fx_leslie   (m, l_buf, r_buf, frames);
         fx_autowah  (m, l_buf, r_buf, frames);
         fx_texture  (m, l_buf, r_buf, frames);
         break;
-    case 5: /* Reverse — reverb FIRST so the dry note is instantly soaked
-             *          in ambience, then delay echoes that ambient blob,
-             *          autowah + tremolo + filter dynamically sculpt the
-             *          wet field, leslie+vibrato add rotation, and the
-             *          texture grain-cloud at the very END chops the
-             *          fully-effected signal into freeze/shimmer.  Best
-             *          for "preserved-in-amber" Mellotron pads. */
+    case 5: /* Reverse — reverb FIRST so the dry note bakes immediately,
+             *          delay echoes the ambient blob, dist+fripp then
+             *          adds another time+dirt layer, mod paints the wet
+             *          field, texture chops at the very end. */
         fx_reverb   (m, l_buf, r_buf, frames);
         fx_delay    (m, l_buf, r_buf, frames);
+        chain_apply_dist_fripp(m, l_buf, r_buf, frames);
         fx_autowah  (m, l_buf, r_buf, frames);
         fx_tremolo  (m, l_buf, r_buf, frames);
         fx_dj_filter(m, l_buf, r_buf, frames);
@@ -2861,9 +3534,77 @@ static void render_block(void *inst, int16_t *out_lr, int frames) {
         fx_vibrato  (m, l_buf, r_buf, frames);
         fx_texture  (m, l_buf, r_buf, frames);
         break;
+
+    /* ── v0.2 new chains ───────────────────────────────────────────────── */
+    case 6: /* Frippertronics — the new effects DOMINATE.
+             *   dist+fripp drives everything (with In-Loop position you
+             *   get the runaway self-osc loops).  Light pre-mod (vibrato),
+             *   no DJ filter or wah to muddy the loops, texture afterwards
+             *   for soft shimmer on the held tones, then reverb bath. */
+        fx_vibrato  (m, l_buf, r_buf, frames);
+        chain_apply_dist_fripp(m, l_buf, r_buf, frames);
+        fx_texture  (m, l_buf, r_buf, frames);
+        fx_tremolo  (m, l_buf, r_buf, frames);
+        fx_leslie   (m, l_buf, r_buf, frames);
+        fx_autowah  (m, l_buf, r_buf, frames);
+        fx_dj_filter(m, l_buf, r_buf, frames);
+        fx_delay    (m, l_buf, r_buf, frames);
+        fx_reverb   (m, l_buf, r_buf, frames);
+        break;
+    case 7: /* Wall of Orchestra — Mellotron classic with modern teeth.
+             *   Brian Eno cathedral wash: rotary (chorus depth) → reverb
+             *   (massive hall) → dist (warmth, Spiral or Tube for the
+             *   "amped Mellotron" sound) → fripp (long lush repeats) →
+             *   texture (subtle shimmer on top).  No filter / wah / tremolo
+             *   sweep — keep it STATIC and HUGE. */
+        fx_vibrato  (m, l_buf, r_buf, frames);
+        fx_leslie   (m, l_buf, r_buf, frames);
+        fx_reverb   (m, l_buf, r_buf, frames);
+        chain_apply_dist_fripp(m, l_buf, r_buf, frames);
+        fx_delay    (m, l_buf, r_buf, frames);
+        fx_texture  (m, l_buf, r_buf, frames);
+        fx_autowah  (m, l_buf, r_buf, frames);
+        fx_tremolo  (m, l_buf, r_buf, frames);
+        fx_dj_filter(m, l_buf, r_buf, frames);
+        break;
+    case 8: /* Loop Chaos — generative modulated chaos.
+             *   Rotate (leslie doppler) → fripp on heavy feedback →
+             *   wavefold-style dist (use Wavefold or Bitcrush style for
+             *   max destruction) → autowah (envelope-tracking metallic
+             *   sweep) → texture (grain chopping the chaos) → tremolo →
+             *   reverb (catches it all).  Each repeat is more deranged. */
+        fx_leslie   (m, l_buf, r_buf, frames);
+        chain_apply_dist_fripp(m, l_buf, r_buf, frames);
+        fx_autowah  (m, l_buf, r_buf, frames);
+        fx_texture  (m, l_buf, r_buf, frames);
+        fx_tremolo  (m, l_buf, r_buf, frames);
+        fx_vibrato  (m, l_buf, r_buf, frames);
+        fx_dj_filter(m, l_buf, r_buf, frames);
+        fx_delay    (m, l_buf, r_buf, frames);
+        fx_reverb   (m, l_buf, r_buf, frames);
+        break;
+    case 9: /* Dirty Cabinet — guitar-amp-into-spring sim.
+             *   dist FIRST (RAT or Tube Screamer-style — the pedal stage),
+             *   DJ filter as a cabinet tone control, fripp as spring-reverb
+             *   stand-in (use Tape voicing, short Time, no Age), autowah
+             *   for the pedal-after-amp presence, then reverb (a tight
+             *   short ambient stage).  SansAmp DI flavour.  */
+        chain_apply_dist_fripp(m, l_buf, r_buf, frames);
+        fx_dj_filter(m, l_buf, r_buf, frames);
+        fx_autowah  (m, l_buf, r_buf, frames);
+        fx_tremolo  (m, l_buf, r_buf, frames);
+        fx_vibrato  (m, l_buf, r_buf, frames);
+        fx_leslie   (m, l_buf, r_buf, frames);
+        fx_texture  (m, l_buf, r_buf, frames);
+        fx_delay    (m, l_buf, r_buf, frames);
+        fx_reverb   (m, l_buf, r_buf, frames);
+        break;
+
     case 0: /* Classic — Texturizer FIRST so the granular cloud is coloured
              *           by all the modulation/filter/time-based FX that
-             *           follow.  This is the v0.1.14 default. */
+             *           follow.  This is the v0.1.14 default.  v0.1.5 adds
+             *           dist+fripp between the mod stack and the final
+             *           time stage. */
     default:
         fx_texture  (m, l_buf, r_buf, frames);
         fx_vibrato  (m, l_buf, r_buf, frames);
@@ -2871,6 +3612,7 @@ static void render_block(void *inst, int16_t *out_lr, int frames) {
         fx_dj_filter(m, l_buf, r_buf, frames);
         fx_tremolo  (m, l_buf, r_buf, frames);
         fx_autowah  (m, l_buf, r_buf, frames);
+        chain_apply_dist_fripp(m, l_buf, r_buf, frames);
         fx_delay    (m, l_buf, r_buf, frames);
         fx_reverb   (m, l_buf, r_buf, frames);
         break;
@@ -2989,6 +3731,29 @@ static void *create_instance(const char *id, const char *cfg) {
     m->sm_bias = m->p_bias; m->sm_mech = m->p_mech;
     m->sm_chiff = m->p_chiff;
     m->instab_rng_step = 0;
+
+    /* v0.2 FX 2 page defaults — both effects start fully bypassed (mix=0,
+     * blend=0) so existing patches sound identical until the user turns
+     * the new knobs.  Defaults chosen so a single twist of any knob
+     * produces something musical. */
+    m->p_dist_style    = 0;      /* Tube — warmest, most "always musical" */
+    m->p_dist_drive    = 0.4f;   /* moderate when blend > 0 */
+    m->p_dist_tone     = 0.5f;   /* flat */
+    m->p_dist_blend    = 0.0f;   /* OFF — user opts in */
+    m->p_dist_position = 0;      /* Pre — dist → fripp (classic order) */
+    m->sm_dist_drive = m->p_dist_drive;
+    m->sm_dist_tone  = m->p_dist_tone;
+    m->sm_dist_blend = m->p_dist_blend;
+
+    m->p_fripp_type  = 0;      /* Tape (Echoplex EP-3) — DEFAULT, per user spec */
+    m->p_fripp_time  = 0.25f;  /* ~1 sec — the canonical Frippertronics loop length */
+    m->p_fripp_fb    = 0.55f;  /* musical without runaway */
+    m->p_fripp_age   = 0.20f;  /* slight character */
+    m->p_fripp_mix   = 0.0f;   /* OFF — user opts in */
+    m->sm_fripp_age  = m->p_fripp_age;
+    m->sm_fripp_mix  = m->p_fripp_mix;
+    /* Force biquad recompute on first render block */
+    m->fripp.active_voicing = -1;
 
     /* smoothed init */
     m->sm_ab_mix = m->p_ab_mix; m->sm_tone = m->p_tone;

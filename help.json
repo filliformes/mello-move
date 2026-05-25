@@ -24,7 +24,7 @@
       ]
     },
     {
-      "title": "FX",
+      "title": "FX 1",
       "lines": [
         "Auto-Wah: Envelope BPF",
         "Vibrato: 3-voice chorus",
@@ -39,10 +39,39 @@
         "Delay: BBD-style echo",
         "Reverb: Diffuse plate",
         "—",
-        "FX Chain (menu):",
+        "FX Chain (menu, 10):",
         " Classic / Pedalboard",
         " Wet Swirl / Ambient",
-        " Dub / Reverse"
+        " Dub / Reverse",
+        " Frippertronics / Wall",
+        " Loop Chaos / Cabinet"
+      ]
+    },
+    {
+      "title": "FX 2",
+      "lines": [
+        "Dist Drive: 7-style",
+        " distortion amount",
+        "Dist Style: Tube/Fuzz/",
+        " Crimson/Wavefold/",
+        " Bitcrush/Spiral/RAT",
+        "Dist Tone: dark↔bright",
+        "Dist Blend: dry↔wet",
+        "—",
+        "Fripp Time: 10ms..8s",
+        " (1s by 25% knob)",
+        "Fripp Feedback: up to",
+        " self-osc (loop hold)",
+        "Fripp Age: HF roll-off",
+        " + sat + wow combined",
+        "Fripp Mix: dry↔wet",
+        "—",
+        "Delay Type (menu):",
+        " Tape (Echoplex EP-3)",
+        " Magnetic (Echorec)",
+        " Space (RE-201)",
+        "Dist Position (menu):",
+        " Pre/In-Loop/Post"
       ]
     },
     {

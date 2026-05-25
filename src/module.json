@@ -1,7 +1,7 @@
 {
   "id": "mello",
   "name": "Mello",
-  "version": "0.1.2",
+  "version": "0.1.5",
   "api_version": 2,
   "description": "Dual-bank tape instrument. Mellotron x Casio SK-1 x Kiviak WoFi. Folder-of-WAVs banks, deep tape/preamp modelling, 8-macro FX rack.",
   "author": "Vincent Fillion (Filliformes)",
@@ -23,7 +23,8 @@
           "knobs": ["bank_a","bank_b","ab_mix","pitch","tone","env_preset","crunch","volume"],
           "params": [
             {"level": "Main",     "label": "Main"},
-            {"level": "FX",       "label": "FX"},
+            {"level": "FX 1",     "label": "FX 1"},
+            {"level": "FX 2",     "label": "FX 2"},
             {"level": "Envelope", "label": "Envelope"},
             {"level": "Tape",     "label": "Tape & Preamp"}
           ]
@@ -48,10 +49,15 @@
           "knobs": ["tape_style","warble","flutter","degrade","tape_sat","preamp_model","input_level","limiter"],
           "params": ["tape_style","warble","flutter","degrade","tape_sat","preamp_model","input_level","limiter","tape_len","chiff","bias","mech"]
         },
-        "FX": {
-          "label": "FX",
+        "FX 1": {
+          "label": "FX 1",
           "knobs": ["autowah","vibrato","tremolo","rotary","dj_filter","texture","delay","reverb"],
           "params": ["fx_chain","autowah","vibrato","tremolo","rotary","dj_filter","texture","delay","reverb"]
+        },
+        "FX 2": {
+          "label": "FX 2",
+          "knobs": ["dist_drive","dist_style","dist_tone","dist_blend","fripp_time","fripp_fb","fripp_age","fripp_mix"],
+          "params": ["dist_style","dist_drive","dist_tone","dist_blend","dist_position","delay_type","fripp_time","fripp_fb","fripp_age","fripp_mix"]
         }
       }
     },
@@ -90,7 +96,7 @@
       {"key": "texture",       "name": "Texturizer", "type": "float", "min": 0,   "max": 1,  "step": 0.01},
       {"key": "delay",         "name": "Delay",      "type": "float", "min": 0,   "max": 1,  "step": 0.01},
       {"key": "reverb",        "name": "Reverb",     "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "fx_chain",      "name": "FX Chain",   "type": "enum",  "options": ["Classic","Pedalboard","Wet Swirl","Ambient Wash","Dub","Reverse"]},
+      {"key": "fx_chain",      "name": "FX Chain",   "type": "enum",  "options": ["Classic","Pedalboard","Wet Swirl","Ambient Wash","Dub","Reverse","Frippertronics","Wall of Orchestra","Loop Chaos","Dirty Cabinet"]},
       {"key": "map_mode",      "name": "Map Mode",   "type": "enum",  "options": ["Tape (exact)","Full range (stretched)"]},
       {"key": "loop_mode",     "name": "Loop Mode",  "type": "enum",  "options": ["Tape (no loop)","Sustain (loop)"]},
       {"key": "half_speed",    "name": "Half Speed", "type": "enum",  "options": ["Off","On"]},
@@ -100,7 +106,17 @@
       {"key": "reverse",       "name": "Reverse",    "type": "enum",  "options": ["Off","On"]},
       {"key": "sample_start",  "name": "Sample Start","type": "float","min": 0,   "max": 1,  "step": 0.01},
       {"key": "bias",          "name": "Bias",       "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "mech",          "name": "Mech Noise", "type": "float", "min": 0,   "max": 1,  "step": 0.01}
+      {"key": "mech",          "name": "Mech Noise", "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "dist_style",    "name": "Dist Style", "type": "enum",  "options": ["Tube","Fuzz","Crimson","Wavefold","Bitcrush","Spiral","RAT"]},
+      {"key": "dist_drive",    "name": "Dist Drive", "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "dist_tone",     "name": "Dist Tone",  "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "dist_blend",    "name": "Dist Blend", "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "dist_position", "name": "Dist Position","type": "enum","options": ["Pre","In-Loop","Post"]},
+      {"key": "delay_type",    "name": "Delay Type", "type": "enum",  "options": ["Tape","Magnetic","Space"]},
+      {"key": "fripp_time",    "name": "Fripp Time", "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "fripp_fb",      "name": "Fripp Feedback","type": "float", "min": 0,"max": 1,  "step": 0.01},
+      {"key": "fripp_age",     "name": "Fripp Age",  "type": "float", "min": 0,   "max": 1,  "step": 0.01},
+      {"key": "fripp_mix",     "name": "Fripp Mix",  "type": "float", "min": 0,   "max": 1,  "step": 0.01}
     ]
   }
 }

@@ -8,7 +8,9 @@ lutherie banner **Filliformes**.
 
 > Physical-model Rotary speaker. Per-style tape saturation. Crybaby-style
 > Auto-Wah. WoFi-inspired granular Texturizer with vintage analog warmth.
-> 6 selectable FX-chain orderings. Sustain loop with Blackbox-style
+> **7-style distortion + 3-mode Frippertronics tape delay** (Echoplex EP-3 /
+> Binson Echorec / Roland RE-201, all self-osc-capable).
+> **10 selectable FX-chain orderings.** Sustain loop with Blackbox-style
 > Crossfade %. Auto Retune with MIDI-table-verified pitch correction.
 > Per-bank auto level-match so different sample sets play at consistent
 > loudness. MIDI mod wheel / aftertouch / pitch bend / panic-CC support.
@@ -102,8 +104,8 @@ uses that name — both work, no breakage.
 - Off (bypass), Clean DI, MkII Tube, **M400 Solid-State (default)**,
   SK-1 Lo-fi
 
-### 8-effect FX rack — knob order
-On the FX page, the eight knobs are:
+### FX 1 — 8-effect rack (knob order)
+On the **FX 1** page, the eight knobs are:
 
 | # | FX | What it is |
 |---|---|---|
@@ -119,15 +121,65 @@ On the FX page, the eight knobs are:
 Each effect is musical at every position of its knob (Reface CP /
 Hologram Microcosm school — no dead zones).
 
-### FX-chain ordering
-Six selectable processing orderings (menu-only on the FX page):
+### FX 2 — Distortion + Frippertronics tape delay (v0.1.5 new)
+On the **FX 2** page, the eight knobs are split 4 + 4 between a multi-style
+distortion and a vintage-voiced regenerative tape delay:
 
-- **Classic** — `texture → vibrato → rotary → dj_filter → tremolo → autowah → delay → reverb`
-- **Pedalboard** — `autowah → vibrato → tremolo → rotary → texture → dj_filter → delay → reverb`
-- **Wet Swirl** — time-based first, then modulation sweeps the wet tail
-- **Ambient Wash** — delay + reverb upfront, every later effect colours the wash
-- **Dub** — dub-console workflow: filter the dry, send to time, mod the late tail
-- **Reverse** — reverb-first "preserved in amber" workflow ending in granular freeze
+| # | Knob | What it is |
+|---|---|---|
+| 1 | **Dist Drive** | Amount of clipping / folding / crush |
+| 2 | **Dist Style** | 7 sonically-distinct shapers (see below) |
+| 3 | **Dist Tone** | Dark ↔ bright tilt (post-shaper LP/HP) |
+| 4 | **Dist Blend** | Dry ↔ wet, equal-power crossfade |
+| 5 | **Fripp Time** | 10 ms – 8 sec — quarter-root curve, 1 sec by 25 % knob |
+| 6 | **Fripp Feedback** | 0 → self-oscillation (every voicing can hold a loop) |
+| 7 | **Fripp Age** | Compounds HF rolloff + sat drive + wow depth on one knob |
+| 8 | **Fripp Mix** | Dry ↔ wet, equal-power crossfade |
+
+**7 distortion styles** — each sonically distinct, auto-level-matched
+via running-RMS so Drive never raises perceived loudness:
+
+| Style | Algorithm |
+|---|---|
+| **Tube** | Asymmetric tanh + 0.25 DC bias (strong 2nd-harmonic) |
+| **Fuzz** | High-gain asymmetric hard clip with knees |
+| **Crimson** | Klon-style antiparallel Si/Ge diode pair |
+| **Wavefold** | Buchla-style iterated triangle reflection (4 folds) |
+| **Bitcrush** | Sample-rate-hold + bit-depth quantize |
+| **Spiral** | Airwindows `sin(x·\|x\|)/\|x\|` w/ 1-sample delayed presence (MIT) |
+| **RAT** | Airwindows iterated polynomial cascade — ProCo RAT / SansAmp DI (MIT) |
+
+**3 Frippertronics voicings** (menu: *Delay Type*) — ported from KrautDrums
+with feedback caps raised so all three can self-oscillate:
+
+| Voicing | Source | Character |
+|---|---|---|
+| **Tape** (default) | Maestro Echoplex EP-3 | Single head, FET preamp +4 dB @ 9.5 kHz, bright repeats |
+| **Magnetic** | Binson Echorec | 4-tap drum, tube preamp +1.5 dB @ 4 kHz, dual-sine wobble |
+| **Space** | Roland RE-201 Space Echo | 3-tap, free-floating tape, audible compression |
+
+**Dist Position** menu param (Pre / In-Loop / Post) controls where the
+distortion sits relative to Frippertronics:
+- **Pre** — `dist → fripp`, echoes of the distorted signal
+- **In-Loop** — same as Pre **plus** extra in-loop saturation in fripp's
+  feedback path, so each repeat picks up more dirt (runaway distortion grows)
+- **Post** — `fripp → dist`, clean delays then distort the stack of repeats
+
+### FX-chain ordering
+**Ten** selectable processing orderings (menu-only on the FX 1 page) —
+the six v0.1 chains updated to slot in the FX 2 effects musically, plus
+four new chains built around them:
+
+- **Classic** — `texture → mod stack → dist+fripp → delay → reverb` (default)
+- **Pedalboard** — `wah → mod stack → texture → dj_filter → dist+fripp → delay → reverb`
+- **Wet Swirl** — time-based first, then dist+fripp, then mod sweeps the wet tail
+- **Ambient Wash** — delay + reverb up front, then dist+fripp drives the wash through the mod stack
+- **Dub** — dub-console: filter dry → time → **dist+fripp as a second time-domain layer** → mod the tail
+- **Reverse** — reverb FIRST, delay echoes it, dist+fripp adds another time+dirt layer, mod paints, texture chops
+- **Frippertronics** *(new)* — dist+fripp DOMINATES; light pre-mod, texture/reverb after
+- **Wall of Orchestra** *(new)* — Brian Eno cathedral: rotary → reverb → dist warmth → fripp lush → texture shimmer
+- **Loop Chaos** *(new)* — leslie → fripp on heavy fb → wavefold-style dist → autowah → texture chops → reverb catches
+- **Dirty Cabinet** *(new)* — guitar-amp-into-spring sim: dist FIRST → DJ filter (cab tone) → fripp (spring sim) → autowah presence → reverb
 
 ### Envelope
 - Per-voice ADSR with **attack-curve** and **release-curve** shapers
@@ -181,11 +233,16 @@ Then power-cycle the Move.
 **Menu params:** Samples Folder · Reverse · Half Speed · Sample Start ·
 Crossfade % · Loop Mode · Map Mode · Auto Retune · Seq Base
 
-### FX
+### FX 1
 **Knobs:** `autowah · vibrato · tremolo · rotary · dj_filter · texture · delay · reverb`
 
-**Menu param:** FX Chain (Classic / Pedalboard / Wet Swirl / Ambient
-Wash / Dub / Reverse)
+**Menu param:** FX Chain (Classic / Pedalboard / Wet Swirl / Ambient Wash /
+Dub / Reverse / Frippertronics / Wall of Orchestra / Loop Chaos / Dirty Cabinet)
+
+### FX 2
+**Knobs:** `dist_drive · dist_style · dist_tone · dist_blend · fripp_time · fripp_fb · fripp_age · fripp_mix`
+
+**Menu params:** Dist Position (Pre / In-Loop / Post) · Delay Type (Tape / Magnetic / Space)
 
 ### Envelope
 **Knobs:** `env_preset · env_a · env_d · env_s · env_r · env_ac · env_rc · env_vel`
@@ -267,7 +324,9 @@ scripts/              — build, install, install_banks, Dockerfile
   ports: Essaim (tape warble + DJ filter), Modes (DJ filter cascade),
   Ambiotica (Texturizer chord quantisation + auto-freeze UX), Super Boum
   + KrautDrums (tape saturation curves), LeslieSim + Surge XT (rotary
-  speaker physics)
+  speaker physics), **KrautDrums (3 Frippertronics voicings — Echoplex /
+  Echorec / RE-201)**, **Airwindows Spiral2 + Drive** (Spiral and RAT
+  distortion shapers, MIT)
 
 ---
 
@@ -296,7 +355,23 @@ each source's licensing terms first.
 
 ## Status
 
-**v0.1.0** — first public release.
+**v0.1.5** — adds the FX 2 page (7-style multi-distortion + 3-mode
+Frippertronics tape delay) and expands the FX-chain selector from 6 to
+10 modes with 4 new chains built around the new effects. Distortion
+shapers include Airwindows Spiral2 and Drive ports (MIT) plus 5 in-house
+designs (Tube / Fuzz / Crimson / Wavefold / Bitcrush). Frippertronics
+voicings are KrautDrums ports (Echoplex EP-3 / Binson Echorec / Roland
+RE-201) with feedback caps raised so every voicing can self-oscillate.
+8-second stereo loop buffer. Age knob compounds HF rolloff + saturation
+drive + wow depth on a single control.
+
+**Earlier**:
+- **v0.1.2** — MellowTrawn library renamed `LL` → `MT`, full 129-bank
+  archive default; `LL` still recognised for legacy setups
+- **v0.1.1** — `raw_midi` manifest hotfix (pitch bend / CC1 / AT silently
+  ignored on v0.1.0 because the flag was inside `capabilities` instead
+  of root)
+- **v0.1.0** — first public release
 
 Feedback and issues welcome at the GitHub tracker. PRs that respect the
 **simplexity** design principle (one knob, one idea, musical at every

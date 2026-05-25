@@ -17,6 +17,7 @@ CONTAINER=$(MSYS_NO_PATHCONV=1 docker create "$IMAGE" \
   bash -c "set -e && \
     mkdir -p /build/dist/$MODULE_ID && \
     cp /build/src/module.json /build/dist/$MODULE_ID/ && \
+    cp /build/src/help.json   /build/dist/$MODULE_ID/ && \
     aarch64-linux-gnu-gcc \
       -O3 -shared -fPIC -ffast-math \
       -march=armv8-a -mtune=cortex-a72 \
@@ -44,6 +45,7 @@ docker cp "$CONTAINER:/build/dist/$MODULE_ID-module.tar.gz"    "$ROOT/dist/$MODU
 docker rm "$CONTAINER" > /dev/null
 
 cp "$ROOT/src/module.json" "$ROOT/dist/$MODULE_ID/"
+cp "$ROOT/src/help.json"   "$ROOT/dist/$MODULE_ID/"
 
 echo "Built  : dist/$MODULE_ID/dsp.so"
 echo "Archive: dist/$MODULE_ID-module.tar.gz"
