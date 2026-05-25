@@ -1,0 +1,150 @@
+{
+  "title": "Mello",
+  "children": [
+    {
+      "title": "Main",
+      "lines": [
+        "Bank A/B: WAV bank pick",
+        "A · B: Crossfade banks",
+        "Pitch: ±24 semitones",
+        "Tone: Tilt EQ @ 800Hz",
+        "Env: 22 ADSR presets",
+        "Crunch: Pre-tape grit",
+        "Volume: Output level",
+        "—",
+        "Samples Folder: Library",
+        " jump (LL/SB/90/…)",
+        "Reverse: Play tape back",
+        "Half Speed: ‑1 octave",
+        "Sample Start: Skip in",
+        "Crossfade %: Loop xfade",
+        " width 5–130 ms",
+        "Loop / Map / Auto Retune",
+        "Seq Base: -N.wav offset"
+      ]
+    },
+    {
+      "title": "FX",
+      "lines": [
+        "Auto-Wah: Envelope BPF",
+        "Vibrato: 3-voice chorus",
+        "Tremolo: 0.5→22 Hz",
+        " (snap past 80%)",
+        "Rotary: Physical Leslie",
+        " 0–25% real, 25–100%",
+        " above-realistic spin",
+        "DJ Filter: LP/HP sweep",
+        "Texturizer: Grain cloud",
+        " freeze past 96%",
+        "Delay: BBD-style echo",
+        "Reverb: Diffuse plate",
+        "—",
+        "FX Chain (menu):",
+        " Classic / Pedalboard",
+        " Wet Swirl / Ambient",
+        " Dub / Reverse"
+      ]
+    },
+    {
+      "title": "Envelope",
+      "lines": [
+        "Env: Pick preset or",
+        " edit live (→Custom)",
+        "A D S R: Standard ADSR",
+        "Atk Crv: 0=fast-start",
+        " 0.5=linear 1=slow",
+        "Rel Crv: Same shaper",
+        "Vel: Velocity → amp",
+        "—",
+        "Presets: Tape Organ,",
+        " Strings, Slow Pad,",
+        " Choir Swell, Pluck,",
+        " Stab, Bowed Swell,",
+        " Gate, Reverse Swell,",
+        " Staccato, Drone, Pad",
+        " Wash, Pizzicato, +9"
+      ]
+    },
+    {
+      "title": "Tape & Preamp",
+      "lines": [
+        "Style: Off / Clean /",
+        " M400 / MkII / M300 /",
+        " Worn (per-style curve)",
+        "Warble: Slow wow LFO",
+        "Flutter: Fast wobble",
+        "Degrade: Hiss + drops",
+        "Saturation: Tape drive",
+        "Preamp: Off/Clean DI/",
+        " MkII Tube/M400 SS/",
+        " SK-1 Lo-fi",
+        "Input: Pre-tape level",
+        "Limiter: Output guard",
+        "—",
+        "Tape Len: Run-out (s)",
+        "Chiff: Key-off noise",
+        "Bias: Tape character",
+        "Mech Noise: Transport"
+      ]
+    },
+    {
+      "title": "Banks & Libraries",
+      "lines": [
+        "instruments/<lib>/<bnk>",
+        "Free WAV libraries:",
+        " LL = Leisureland",
+        " SB = Sonic Bloom",
+        " 90 = 90s Archive CD",
+        "Add your own folder →",
+        " appears as new lib",
+        "—",
+        "File names accepted:",
+        " A2.wav, C#3.wav",
+        " Bb4.wav (C4 = 60)",
+        " 60.wav (bare MIDI)",
+        " prefix-8.wav (seq)",
+        "16-bit PCM mono/stereo"
+      ]
+    },
+    {
+      "title": "MIDI",
+      "lines": [
+        "Note on/off ✓",
+        "Mod wheel (CC1) →",
+        " vibrato amount",
+        "Aftertouch →",
+        " tape flutter depth",
+        "Pitch bend ±2 st",
+        "CC120/123: Panic",
+        " (all notes off)",
+        "—",
+        "Same-note retrigger",
+        " auto-releases prev",
+        " voice (no stuck",
+        " notes from USB MIDI)"
+      ]
+    },
+    {
+      "title": "Tips",
+      "lines": [
+        "Two banks layer dual",
+        " Mellotrons — turn",
+        " A · B for crossfade",
+        "Auto Retune is OFF by",
+        " default — leave it",
+        " off for natural tape",
+        " wobble, on for tuning",
+        "Crossfade % up to 130",
+        " ms for sustained pads",
+        "Rotary spool-up = 60ms",
+        " spool-down = 30 ms",
+        "Wow + Flutter add a",
+        " lot at very low knob",
+        " values — try 5–15%",
+        "Tape Style Off skips",
+        " sat & head bump but",
+        " keeps wow/flutter"
+      ]
+    }
+  ]
+}
