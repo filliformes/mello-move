@@ -27,3 +27,4 @@ desktop.ini
 *.local
 .env
 .claude/
+scripts/__pycache__/
