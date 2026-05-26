@@ -209,9 +209,19 @@ int mello_parse_midi_note(const char *filename, int seq_base) {
     char *dot = strrchr(name, '.'); if (dot) *dot = '\0';
     int len = (int)strlen(name);
 
-    /* 1. last note-name match wins (handles "MkII Violins A2") */
+    /* 1. last note-name match AT A WORD BOUNDARY wins.
+     *
+     * A position is a word boundary if it's the start of the name or is
+     * preceded by a non-alphabetic character (digit, '-', '_', space, …).
+     * Without this guard the parser matches note-letter substrings deep
+     * inside bank names — e.g. "MkiiFlute-1.wav" matches "e-1" → E-1
+     * (MIDI 4), "Chamb3Vio-1.wav" matches "b3" → B3 (MIDI 59) — and the
+     * resulting wrong MIDI assignment short-circuits the trailing -N
+     * sequential parser below.  Affects 43 of 129 MellowTrawn banks
+     * including Mkii-Flute (the default bank).  v0.1.5 bug; v0.1.6 fix. */
     int found = -1;
     for (int i = 0; i < len; i++) {
+        if (i > 0 && isalpha((unsigned char)name[i - 1])) continue;
         int consumed = 0;
         int m = try_note_at(name, i, len, &consumed);
         if (m >= 0) { found = m; i += consumed - 1; }
