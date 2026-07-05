@@ -2412,7 +2412,11 @@ static inline float dist_crimson(float x, float drive) {
     if (y > 0.0f) {
         y = y / (1.0f + 0.5f * y);                    /* Si soft compress */
     } else if (y < -0.5f) {
-        y = -0.5f - (y + 0.5f) * 0.1f;                /* Ge hard knee */
+        /* Ge hard knee: continue BELOW -0.5 with slope +0.1.  (y+0.5) is
+         * negative here, so `+` pushes the output further negative — the
+         * v0.1.5 `-` sign folded excursions back UP above the knee, which
+         * inverted the slope and was unbounded for extreme negatives. */
+        y = -0.5f + (y + 0.5f) * 0.1f;
     }
     return y * 0.85f;
 }
@@ -2452,47 +2456,49 @@ static inline float dist_spiral(float x, float drive, float *prev) {
     return now * (1.0f - drive) + dly * drive;
 }
 
-/* (7) RAT — Airwindows Drive iterative polynomial cascade (DriveProc.cpp).
- *      Modelled on ProCo RAT / SansAmp DI: stacked transistor gain stages
- *      with inter-stage rolloff.  Each loop iteration adds another stage
- *      of (1 - (|x|·g)²) · (1+g) — produces dense midrange-focused drive
- *      with growing sustain at higher Drive.  MIT — Chris Johnson.           */
+/* (7) RAT — cascaded transistor gain stages (ProCo RAT / SansAmp DI).
+ *      Inspired by Airwindows Drive's iterated-stage idea, but implemented
+ *      as a bounded tanh cascade: each stage is gain → soft-clip, exactly
+ *      like chained transistor stages.  Drive maps to stage COUNT (1..6) +
+ *      a fractional final stage, so more drive = more cascaded compression
+ *      (dense, midrange-forward, sustaining) rather than more gain into one
+ *      knee — sonically distinct from the single-pass Tube shaper.
+ *
+ *      v0.1.5's literal polynomial port `x·(1-(|x|·g)²)·(1+g)` was removed:
+ *      the polynomial folds over above |x|=0.577 and DIVERGES for |x|>1.25 —
+ *      with the ×2 inter-stage gain a 1.5-peak input reached inf, then
+ *      `inf - inf` = NaN in later stages, and fast_tanh passes NaN through
+ *      (its range clamps compare false on NaN) — poisoning every downstream
+ *      filter state until instance reload.  The tanh cascade is bounded at
+ *      every stage by construction.                                          */
 static inline float dist_rat(float x, float drive) {
-    if (x >  1.5f) x =  1.5f;
-    if (x < -1.5f) x = -1.5f;
-    float total = drive * 6.0f + 0.2f;        /* 0.2..6.2 total drive */
-    const float step = 1.0f;
-    int iters = 0;
-    while (total > step && iters++ < 8) {
-        total -= step;
-        float k = fabsf(x) * step;
-        x -= x * k * k;
-        x *= (1.0f + step);
+    if (x >  1.0f) x =  1.0f;
+    if (x < -1.0f) x = -1.0f;
+    float total = drive * 5.0f + 1.0f;        /* 1.0..6.0 stages */
+    int   full  = (int)total;
+    float frac  = total - (float)full;
+    for (int s = 0; s < full && s < 6; s++) {
+        x = fast_tanh(x * 1.9f) * 0.85f;      /* gain 1.9 → clip → normalise */
     }
-    /* Final partial stage */
-    float k = fabsf(x) * total;
-    x -= x * k * k;
-    x *= (1.0f + total);
-    /* Soft-clip the asymptote — multi-stage cascade can push past ±1 */
-    return fast_tanh(x * 0.9f);
+    if (frac > 0.001f) {
+        /* fractional final stage — crossfade so the Drive knob is smooth
+         * across stage-count boundaries instead of stepping */
+        float staged = fast_tanh(x * 1.9f) * 0.85f;
+        x = x * (1.0f - frac) + staged * frac;
+    }
+    return x;
 }
 
 /* (5) Bitcrush — purely digital character (sample-rate-hold + bit-depth
  *      quantization).  No tanh anywhere.  Drive maps to both crush amount
  *      (lower bit depth) and rate reduction (longer hold).  Most "broken"
- *      of the 5 styles; sonically nothing like the others. */
-static inline float dist_bitcrush_step(float x, float drive,
-                                       float *hold, float *phase,
-                                       float rate_step) {
-    *phase += rate_step;
-    if (*phase >= 1.0f) {
-        *phase -= 1.0f;
-        float bits = 12.0f - drive * 10.0f;             /* 12 down to 2 bits */
-        if (bits < 2.0f) bits = 2.0f;
-        float levels = powf(2.0f, bits) * 0.5f;
-        *hold = roundf(x * levels) / levels;
-    }
-    return *hold;
+ *      of the styles; sonically nothing like the others.
+ *      Pure quantizer — the sample-hold clocking lives in fx_distortion so
+ *      L and R hold on the SAME tick (v0.1.5 advanced a shared phase once
+ *      per channel = double the intended rate + L/R sampling at alternating
+ *      instants). */
+static inline float dist_bitcrush_quant(float x, float levels) {
+    return roundf(x * levels) / levels;
 }
 
 static void fx_distortion(mello_t *m, float *l, float *r, int frames) {
@@ -2504,12 +2510,19 @@ static void fx_distortion(mello_t *m, float *l, float *r, int frames) {
     float tone  = clampf(m->sm_dist_tone,  0.0f, 1.0f);
     float blend = clampf(m->sm_dist_blend, 0.0f, 1.0f);
 
-    /* Tone tilt: dark = LP @ ~800 Hz, bright = HP @ ~700 Hz.  Centre = flat. */
-    float tone_lp_coef = clampf(0.04f + (1.0f - tone) * 0.30f, 0.04f, 0.34f);
+    /* Tone tilt: LPF opens WITH tone (dark = closed ~300 Hz, bright = open
+     * ~3.3 kHz) while a gentle HPF rises with tone to tighten the lows.
+     * v0.1.5 had the LP term inverted ((1-tone)·0.30) — "full bright" was
+     * actually a muffled 310-430 Hz bandpass. */
+    float tone_lp_coef = clampf(0.04f + tone * 0.30f, 0.04f, 0.34f);
     float tone_hp_coef = clampf(0.005f + tone * 0.05f, 0.005f, 0.055f);
 
-    /* Bitcrush phase increment — drive 0..1 → SR/2 down to SR/24 */
+    /* Bitcrush: phase increment (drive 0..1 → SR/2 down to SR/24) and
+     * quantization level count, both per-block constants. */
     float bc_rate = 0.5f - drive * 0.46f;
+    float bc_bits = 12.0f - drive * 10.0f;
+    if (bc_bits < 2.0f) bc_bits = 2.0f;
+    float bc_levels = powf(2.0f, bc_bits) * 0.5f;
 
     /* Equal-power dry/wet — lift out of inner loop since blend is
      * per-block smoothed (smooth_param called in render_block). */
@@ -2545,10 +2558,16 @@ static void fx_distortion(mello_t *m, float *l, float *r, int frames) {
             wet_r = dist_wavefold(in_r, 0.5f + drive * 3.0f);
             break;
         case 4:
-            wet_l = dist_bitcrush_step(in_l, drive, &m->dist.sr_hold_l,
-                                       &m->dist.sr_phase, bc_rate);
-            wet_r = dist_bitcrush_step(in_r, drive, &m->dist.sr_hold_r,
-                                       &m->dist.sr_phase, bc_rate);
+            /* One clock for both channels: advance the phase ONCE per frame
+             * and re-sample L and R on the same tick. */
+            m->dist.sr_phase += bc_rate;
+            if (m->dist.sr_phase >= 1.0f) {
+                m->dist.sr_phase -= 1.0f;
+                m->dist.sr_hold_l = dist_bitcrush_quant(in_l, bc_levels);
+                m->dist.sr_hold_r = dist_bitcrush_quant(in_r, bc_levels);
+            }
+            wet_l = m->dist.sr_hold_l;
+            wet_r = m->dist.sr_hold_r;
             break;
         case 5:    /* Spiral — Airwindows Spiral2 character */
             wet_l = dist_spiral(in_l, drive, &m->dist.spiral_prev_l);

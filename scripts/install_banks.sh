@@ -26,6 +26,14 @@ DEST_BASE="${DEST_BASE:-/data/UserData/schwung/modules/sound_generators}"
 DEST="$DEST_BASE/$MODULE_ID/instruments"
 SRC_BASE="$(cd "$(dirname "$0")/.." && pwd)/instruments"
 
+# Guard: refuse to run ON the Move (no ssh/rsync there; this script pushes
+# files TO the Move from your computer). /dev/ablspi0.0 only exists on-device.
+if [ -e /dev/ablspi0.0 ]; then
+    echo "ERROR: this script must run on your COMPUTER, not on the Move." >&2
+    echo "Exit this SSH session and run it from the cloned repo on your machine." >&2
+    exit 1
+fi
+
 ssh ableton@$MOVE_HOST "mkdir -p '$DEST'"
 
 HAVE_RSYNC=0

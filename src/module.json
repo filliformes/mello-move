@@ -1,7 +1,7 @@
 {
   "id": "mello",
   "name": "Mello",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "api_version": 2,
   "description": "Dual-bank tape instrument. Mellotron x Casio SK-1 x Kiviak WoFi. Folder-of-WAVs banks, deep tape/preamp modelling, 8-macro FX rack.",
   "author": "Vincent Fillion (Filliformes)",
@@ -118,5 +118,14 @@
       {"key": "fripp_age",     "name": "Fripp Age",  "type": "float", "min": 0,   "max": 1,  "step": 0.01},
       {"key": "fripp_mix",     "name": "Fripp Mix",  "type": "float", "min": 0,   "max": 1,  "step": 0.01}
     ]
+  },
+  "assets": {
+    "path": "instruments",
+    "label": "Sample Libraries",
+    "extensions": [".wav"],
+    "description": "Drop WAV sample banks under instruments/<library>/<bank>/. One note per file; filenames can be note names (A2.wav, C#3.wav), MIDI numbers (60.wav), or sequential (MyBank-8.wav). Three free Mellotron libraries are supported out of the box: MT (MellowTrawn/Leisureland), SB (Sonic Bloom), 90 (90s Archive CD).",
+    "hint": "Find the free MellowTrawn/Leisureland Mellotron samples at",
+    "hint_url": "http://www.leisureland.us/mellotron.htm",
+    "hint_url_label": "Leisureland"
   }
 }

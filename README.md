@@ -213,15 +213,28 @@ four new chains built around them:
 4. Add Mello to a chain — you're done.
 
 ### Manual install (devs / pre-release)
+
+> **⚠ Run these from YOUR COMPUTER, not on the Move.** The scripts use
+> `ssh`/`scp` to push files *to* the Move over the network — they cannot
+> run on the device itself (no ssh client there; the scripts now refuse
+> and explain if you try). Prerequisites on your machine: `git`, `ssh`,
+> `docker`. On **Windows**, use **Git Bash** (ships with Git for Windows)
+> — the scripts handle the missing `rsync` automatically by falling back
+> to per-bank `scp`.
+
 ```bash
+# In a terminal on your computer:
 git clone https://github.com/filliformes/mello-move.git
 cd mello-move
 ./scripts/build.sh          # Docker ARM64 cross-compile → dist/mello/dsp.so
-./scripts/install.sh        # scp dsp.so + module.json to move.local
-./scripts/install_banks.sh  # rsync your WAV library (one-time, you supply)
+./scripts/install.sh        # push dsp.so + module.json + help.json to move.local
+./scripts/install_banks.sh  # push your WAV library (one-time, you supply)
 ```
 
-Then power-cycle the Move.
+`install.sh` verifies the transfer (md5) and warns if an older duplicate
+install exists on the device. **Then power-cycle the Move** — module.json
+is cached at startup, so without a full off/on you keep hearing the
+previous version.
 
 ---
 
@@ -284,12 +297,13 @@ varispeed engine).
 
 ## Building from source
 
-Requires Docker (or a local `aarch64-linux-gnu-gcc` toolchain).
+Requires Docker (or a local `aarch64-linux-gnu-gcc` toolchain). **All
+commands run on your computer** — see the install-section note above.
 
 ```bash
-./scripts/build.sh         # cross-compile dsp.so for ARM64
-./scripts/install.sh       # scp dsp.so + module.json
-./scripts/install_banks.sh # rsync WAV library (skip if not changed)
+./scripts/build.sh         # cross-compile dsp.so for ARM64 (Docker must be running)
+./scripts/install.sh       # push dsp.so + module.json + help.json, md5-verified
+./scripts/install_banks.sh # push WAV library — diffs and sends only missing banks
 ```
 
 Source layout:

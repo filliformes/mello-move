@@ -10,7 +10,13 @@ ROOT="$SCRIPT_DIR/.."
 IMAGE="schwung-mello-builder"
 
 # Build the cross-compile image (cached after first run).
-docker build -t "$IMAGE" -f "$SCRIPT_DIR/Dockerfile" "$ROOT"
+# Explicit check — `set -e` does not reliably abort on Git Bash for Windows,
+# and a dead Docker daemon otherwise cascades into confusing downstream errors
+# while stale dist/ artefacts survive and get shipped.
+if ! docker build -t "$IMAGE" -f "$SCRIPT_DIR/Dockerfile" "$ROOT"; then
+    echo "ERROR: docker build failed — is Docker Desktop running?" >&2
+    exit 1
+fi
 
 # Container builds the .so, copies module.json, tars dist/mello/.
 CONTAINER=$(MSYS_NO_PATHCONV=1 docker create "$IMAGE" \
@@ -18,6 +24,10 @@ CONTAINER=$(MSYS_NO_PATHCONV=1 docker create "$IMAGE" \
     mkdir -p /build/dist/$MODULE_ID && \
     cp /build/src/module.json /build/dist/$MODULE_ID/ && \
     cp /build/src/help.json   /build/dist/$MODULE_ID/ && \
+    mkdir -p /build/dist/$MODULE_ID/instruments/MT \
+             /build/dist/$MODULE_ID/instruments/SB \
+             /build/dist/$MODULE_ID/instruments/90 && \
+    cp /build/src/instruments_readme.txt /build/dist/$MODULE_ID/instruments/README.txt && \
     aarch64-linux-gnu-gcc \
       -O3 -shared -fPIC -ffast-math \
       -march=armv8-a -mtune=cortex-a72 \
@@ -28,6 +38,11 @@ CONTAINER=$(MSYS_NO_PATHCONV=1 docker create "$IMAGE" \
       /build/src/dsp/wav_bank.c \
       -lm -lpthread && \
     cd /build/dist && tar -czf /build/dist/$MODULE_ID-module.tar.gz $MODULE_ID/")
+
+if [ -z "$CONTAINER" ]; then
+    echo "ERROR: docker create failed — no container id returned." >&2
+    exit 1
+fi
 
 docker start -a "$CONTAINER"
 
