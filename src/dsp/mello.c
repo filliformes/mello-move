@@ -527,6 +527,7 @@ typedef struct {
     float mech_phase;
     float instab_state, instab_target;
     uint32_t instab_rng_step;
+    uint32_t note_age;         /* per-instance voice-steal age (was a shared static in on_midi) */
 
     /* aftertouch-driven flutter add-on (channel + last poly AT) */
     float at_flutter;
@@ -1588,7 +1589,7 @@ static inline float leslie_tap(const float *buf, int wp,
     /* Inverse-distance AM: near-side = louder, far-side = softer.
      * (√2 − d/r) is roughly ±1 as the horn rotates, so gain swings
      * 1 ± am_depth. */
-    float am = 1.0f + am_depth * (1.4142136f - dist_cm * (1.0f / 1.0f) / r_cm);
+    float am = 1.0f + am_depth * (1.4142136f - dist_cm / r_cm);
     return v * am;
 }
 
@@ -2318,10 +2319,10 @@ static void fx_reverb(mello_t *m, float *l, float *r, int frames) {
         for (int s = 0; s < 4; s++) {
             float a = AP_A[s];
             float al = a * fb_l + m->rev.ap_l[s];
-            m->rev.ap_l[s] = fb_l - a * al;
+            m->rev.ap_l[s] = fb_l - a * al + 1e-25f;   /* denormal guard */
             fb_l = al;
             float ar = a * fb_r + m->rev.ap_r[s];
-            m->rev.ap_r[s] = fb_r - a * ar;
+            m->rev.ap_r[s] = fb_r - a * ar + 1e-25f;   /* denormal guard */
             fb_r = ar;
         }
 
@@ -2938,7 +2939,7 @@ static void set_param(void *inst, const char *key, const char *val) {
     /* bulk state restore */
     if (!strcmp(key, "state")) {
         /* simple whitespace-separated key=value parser */
-        char buf[2048]; strncpy(buf, val, sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
+        char buf[4096]; strncpy(buf, val, sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
         char *tok = strtok(buf, " \t\n");
         while (tok) {
             char *eq = strchr(tok, '=');
@@ -3053,33 +3054,37 @@ static const char *UI_HIERARCHY =
 /* ---- chain_params built dynamically so bank_a/bank_b enums reflect the scan ---- */
 static int build_chain_params_json(const mello_t *m, char *buf, int buf_len) {
     int p = 0;
-    p += snprintf(buf + p, buf_len - p, "[");
+    /* Clamp remaining size: never pass a negative (-> huge size_t) to
+     * snprintf.  snprintf(ptr, 0, ...) writes nothing, so an overflowing
+     * build degrades to clean truncation instead of a heap smash. */
+    #define CP_REM ((buf_len - p) > 0 ? (buf_len - p) : 0)
+    p += snprintf(buf + p, CP_REM, "[");
     /* sample_lib — dynamic enum of library folder names */
-    p += snprintf(buf + p, buf_len - p,
+    p += snprintf(buf + p, CP_REM,
                   "{\"key\":\"sample_lib\",\"name\":\"Samples Folder\",\"type\":\"enum\",\"options\":[");
-    if (m->lib_list.count == 0) p += snprintf(buf + p, buf_len - p, "\"(empty)\"");
+    if (m->lib_list.count == 0) p += snprintf(buf + p, CP_REM, "\"(empty)\"");
     for (int i = 0; i < m->lib_list.count; i++) {
-        p += snprintf(buf + p, buf_len - p, "%s\"%s\"", i == 0 ? "" : ",", m->lib_list.names[i]);
+        p += snprintf(buf + p, CP_REM, "%s\"%s\"", i == 0 ? "" : ",", m->lib_list.names[i]);
     }
-    p += snprintf(buf + p, buf_len - p, "]},");
+    p += snprintf(buf + p, CP_REM, "]},");
     /* bank_a / bank_b enums (use scanned folder names; fall back to a single
      * "(empty)" option if instruments/ has no folders) */
-    p += snprintf(buf + p, buf_len - p,
+    p += snprintf(buf + p, CP_REM,
                   "{\"key\":\"bank_a\",\"name\":\"Bank A\",\"type\":\"enum\",\"options\":[");
-    if (m->blist.count == 0) p += snprintf(buf + p, buf_len - p, "\"(empty)\"");
+    if (m->blist.count == 0) p += snprintf(buf + p, CP_REM, "\"(empty)\"");
     for (int i = 0; i < m->blist.count; i++) {
-        p += snprintf(buf + p, buf_len - p, "%s\"%s\"", i == 0 ? "" : ",", m->blist.names[i]);
+        p += snprintf(buf + p, CP_REM, "%s\"%s\"", i == 0 ? "" : ",", m->blist.names[i]);
     }
-    p += snprintf(buf + p, buf_len - p, "]},");
-    p += snprintf(buf + p, buf_len - p,
+    p += snprintf(buf + p, CP_REM, "]},");
+    p += snprintf(buf + p, CP_REM,
                   "{\"key\":\"bank_b\",\"name\":\"Bank B\",\"type\":\"enum\",\"options\":[");
-    if (m->blist.count == 0) p += snprintf(buf + p, buf_len - p, "\"(empty)\"");
+    if (m->blist.count == 0) p += snprintf(buf + p, CP_REM, "\"(empty)\"");
     for (int i = 0; i < m->blist.count; i++) {
-        p += snprintf(buf + p, buf_len - p, "%s\"%s\"", i == 0 ? "" : ",", m->blist.names[i]);
+        p += snprintf(buf + p, CP_REM, "%s\"%s\"", i == 0 ? "" : ",", m->blist.names[i]);
     }
-    p += snprintf(buf + p, buf_len - p, "]},");
+    p += snprintf(buf + p, CP_REM, "]},");
     /* remaining params (static) */
-    p += snprintf(buf + p, buf_len - p,
+    p += snprintf(buf + p, CP_REM,
         "{\"key\":\"ab_mix\",\"name\":\"A Mix B\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
         "{\"key\":\"pitch\",\"name\":\"Pitch\",\"type\":\"int\",\"min\":-24,\"max\":24,\"step\":1},"
         "{\"key\":\"tone\",\"name\":\"Tone\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
@@ -3135,6 +3140,7 @@ static int build_chain_params_json(const mello_t *m, char *buf, int buf_len) {
         "{\"key\":\"fripp_age\",\"name\":\"Fripp Age\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
         "{\"key\":\"fripp_mix\",\"name\":\"Fripp Mix\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01}"
         "]");
+    #undef CP_REM
     return p;
 }
 
@@ -3158,13 +3164,19 @@ static int get_param(void *inst, const char *key, char *buf, int buf_len) {
             "tape_style=%d warble=%.4f flutter=%.4f degrade=%.4f tape_sat=%.4f preamp_model=%d "
             "input_level=%.4f limiter=%.4f tape_len=%.4f chiff=%.4f "
             "vibrato=%.4f rotary=%.4f dj_filter=%.4f tremolo=%.4f autowah=%.4f texture=%.4f delay=%.4f reverb=%.4f "
-            "sample_lib=%d bank_a=%d bank_b=%d fx_chain=%d map_mode=%d loop_mode=%d half_speed=%d xfade_pct=%d auto_retune=%d seq_base=%d",
+            "sample_lib=%d bank_a=%d bank_b=%d fx_chain=%d map_mode=%d loop_mode=%d half_speed=%d xfade_pct=%d auto_retune=%d seq_base=%d "
+            "reverse=%d sample_start=%.4f bias=%.4f mech=%.4f "
+            "dist_style=%d dist_drive=%.4f dist_tone=%.4f dist_blend=%.4f dist_position=%d "
+            "delay_type=%d fripp_time=%.4f fripp_fb=%.4f fripp_age=%.4f fripp_mix=%.4f",
             m->p_ab_mix, m->p_tone, m->p_crunch, m->p_volume, m->p_pitch, m->p_env_preset,
             m->p_env_a, m->p_env_d, m->p_env_s, m->p_env_r, m->p_env_ac, m->p_env_rc, m->p_env_vel,
             m->p_tape_style, m->p_warble, m->p_flutter, m->p_degrade, m->p_tape_sat, m->p_preamp_model,
             m->p_input_level, m->p_limiter, m->p_tape_len, m->p_chiff,
             m->p_vibrato, m->p_leslie, m->p_dj_filter, m->p_tremolo, m->p_autowah, m->p_texture, m->p_delay, m->p_reverb,
-            m->p_sample_lib, m->p_bank_a, m->p_bank_b, m->p_fx_chain, m->p_map_mode, m->p_loop_mode, m->p_half_speed, m->p_xfade_pct, m->p_auto_retune, m->p_seq_base);
+            m->p_sample_lib, m->p_bank_a, m->p_bank_b, m->p_fx_chain, m->p_map_mode, m->p_loop_mode, m->p_half_speed, m->p_xfade_pct, m->p_auto_retune, m->p_seq_base,
+            m->p_reverse, m->p_sample_start, m->p_bias, m->p_mech,
+            m->p_dist_style, m->p_dist_drive, m->p_dist_tone, m->p_dist_blend, m->p_dist_position,
+            m->p_fripp_type, m->p_fripp_time, m->p_fripp_fb, m->p_fripp_age, m->p_fripp_mix);
     }
 
     /* knob overlay name/value for the current page */
@@ -3242,8 +3254,10 @@ static void on_midi(void *inst, const uint8_t *msg, int len, int src) {
 
     int n_eff = (int)note;
     if (n_eff < 0 || n_eff > 127) return;
-    static uint32_t now = 1;
-    now++;
+    /* Per-instance age counter.  Was a function-static shared by every Mello
+     * instance — harmless (monotonic, relative ordering only) but a needless
+     * cross-instance coupling of the kind removed elsewhere in this file. */
+    uint32_t now = ++m->note_age;
 
     if (status == 0x90 && vel > 0) {
         pthread_mutex_lock(&m->bank_lock);
@@ -3750,6 +3764,7 @@ static void *create_instance(const char *id, const char *cfg) {
     m->sm_bias = m->p_bias; m->sm_mech = m->p_mech;
     m->sm_chiff = m->p_chiff;
     m->instab_rng_step = 0;
+    m->note_age = 0;
 
     /* v0.2 FX 2 page defaults — both effects start fully bypassed (mix=0,
      * blend=0) so existing patches sound identical until the user turns
