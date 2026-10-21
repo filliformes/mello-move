@@ -49,8 +49,8 @@ static const host_api_v1_t *g_host = NULL;
 /* ============================================================================
  * Constants
  * ============================================================================ */
-#define SR              48000.0f
-#define SR_INV          (1.0f / 48000.0f)
+#define SR              44100.0f   /* Ableton Move native rate (all sibling modules use 44100) */
+#define SR_INV          (1.0f / 44100.0f)
 #define MAX_BLOCK       512
 #define NUM_VOICES      16          /* per bank */
 #define INSTRUMENTS_BASE_DEFAULT \
@@ -1430,7 +1430,7 @@ static inline float preamp_sample(int model, float x, float drive) {
  * ============================================================================ */
 static inline float tone_tilt_l(mello_t *m, float x) {
     float t = (m->sm_tone - 0.5f) * 2.0f;          /* -1..+1 */
-    float c = 0.10f;                                 /* ~800 Hz one-pole */
+    float c = 0.1077f;                                 /* ~800 Hz one-pole */
     m->fx.tone_lo_l += c * (x - m->fx.tone_lo_l) + 1e-25f;
     float hi = x - m->fx.tone_lo_l;
     float lo = m->fx.tone_lo_l;
@@ -1439,7 +1439,7 @@ static inline float tone_tilt_l(mello_t *m, float x) {
 }
 static inline float tone_tilt_r(mello_t *m, float x) {
     float t = (m->sm_tone - 0.5f) * 2.0f;
-    float c = 0.10f;
+    float c = 0.1077f;
     m->fx.tone_lo_r += c * (x - m->fx.tone_lo_r) + 1e-25f;
     float hi = x - m->fx.tone_lo_r;
     float lo = m->fx.tone_lo_r;
@@ -1627,8 +1627,8 @@ static void fx_leslie(mello_t *m, float *l, float *r, int frames) {
     m->lez.drum_rate += (diff_d >= 0.0f ? RAMP_UP : RAMP_DOWN) * diff_d;
 
     /* 800 Hz one-pole LP coefficient (cached — same on every sample).
-     * c = 1 - exp(-2π·800/SR) ≈ 0.0944 at 48 kHz. */
-    const float xover_c = 0.0944f;
+     * c = 1 - exp(-2π·800/SR) ≈ 0.1077 at 44.1 kHz. */
+    const float xover_c = 0.1077f;
 
     /* Listener angles relative to horn axis: ±22.5° → 45° mic spread.
      * Pre-computed rotation matrix constants. */
@@ -2122,8 +2122,8 @@ static void fx_texture(mello_t *m, float *l, float *r, int frames) {
          * digital-crisp.  The up-pitch grains (+octave, +fifth) get the
          * most softening, which masks their occasionally-harsh quality
          * while leaving the unison + down-pitch grains intact in body.
-         * c = 1 − exp(−2π·4000/48000) ≈ 0.41. */
-        const float warmth_c = 0.41f;
+         * c = 1 − exp(−2π·4000/44100) ≈ 0.4343. */
+        const float warmth_c = 0.4343f;
         m->tex.warmth_l += warmth_c * (gl - m->tex.warmth_l) + 1e-25f;
         m->tex.warmth_r += warmth_c * (gr - m->tex.warmth_r) + 1e-25f;
         gl = m->tex.warmth_l;
@@ -2335,9 +2335,9 @@ static void fx_reverb(mello_t *m, float *l, float *r, int frames) {
 
         /* 120 Hz one-pole HPF on the loop input — kills sub-bass buildup
          * that accumulates when sustained low notes are sent into a long
-         * decay reverb.  r = exp(-2π·120/SR) ≈ 0.9844.  Standard zero-at-DC
+         * decay reverb.  r = exp(-2π·120/SR) ≈ 0.9830.  Standard zero-at-DC
          * differentiator + leaky integrator. */
-        const float HPF_R = 0.9844f;
+        const float HPF_R = 0.9830f;
         float hpf_out = drive_in - m->rev.hpf_x1 + HPF_R * m->rev.hpf_y1;
         m->rev.hpf_x1 = drive_in;
         m->rev.hpf_y1 = hpf_out;
