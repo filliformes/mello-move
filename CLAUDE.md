@@ -6,22 +6,29 @@ Supersedes the original Mello. **Read `design-spec.md` first** — full architec
 ## What this is
 - `component_type`: **sound_generator** (`plugin_api_v2`, init `move_plugin_init_v2`), pure C.
 - **In-house WAV sampler** — NOT sfizz, NOT xsynth, NOT DecentSampler. Loads raw .wav
-  files from `instruments/<bank>/`, parses the MIDI note from the filename, plays
-  per-voice with linear interpolation. Schwung-sfz used to use sfizz; the parent
-  migrated to xsynth (Rust). Neither is needed for the simple
-  "play this WAV when this key is pressed" semantics Mello actually uses.
-- Four pages × 8 knobs (jog-wheel page switch): **Main · Envelope · Tape & Preamp · FX**.
+  files from `instruments/<library>/<bank>/`, parses the MIDI note from the filename,
+  plays per-voice with linear interpolation. The simple "play this WAV when this key is
+  pressed" semantics Mello needs don't warrant a vendored sampler engine.
+- **Five pages × 8 knobs** (jog-wheel page switch): **Main · FX 1 · FX 2 · Envelope ·
+  Tape & Preamp**.
 
 ## Repo structure
-- `src/dsp/mello.c` — plugin: API, voice manager, 4-page UI, tape, preamp, tone, 8 FX,
-  limiter, master. ~1100 lines, single file.
+- `src/dsp/mello.c` — plugin: API, voice manager, 5-page UI, tape, preamp, tone,
+  FX 1 (8 macros), FX 2 (7-style distortion + 3-voicing Frippertronics tape delay),
+  10 FX-chain routings, async bank loader, auto-retune, pitch-bend/mod-wheel, limiter,
+  master. **~3,900 lines, single file.**
 - `src/dsp/wav_bank.{c,h}` — 16-bit PCM WAV loader + folder scanner + filename→MIDI
-  parser (handles note-name, bare-MIDI, **Leisureland sequential `*-N.wav`**).
-- `src/module.json` — metadata + ui_hierarchy + chain_params (39 params). DSP serves a
-  dynamic `chain_params` via `get_param("chain_params")` so `bank_a`/`bank_b` enums
-  reflect the scanned `instruments/` folder list at runtime.
-- `instruments/` — bank folders. Each subfolder = one bank. Files are .wav. Filename
-  conventions accepted: `A2.wav`, `C#3.wav`, `60.wav`, `prefix-8.wav` (sequential).
+  parser (note-name, bare-MIDI, **Leisureland sequential `*-N.wav`**) + autocorrelation
+  pitch detection for Auto-Retune + per-bank peak-normalise (`bank_gain`).
+- `src/module.json` — metadata + ui_hierarchy (5 levels) + chain_params (**55 params**).
+  DSP serves a dynamic `chain_params` via `get_param("chain_params")` so the `sample_lib`,
+  `bank_a` and `bank_b` enums reflect the scanned `instruments/<library>/<bank>/` tree at
+  runtime.
+- `instruments/` — **two-tier**: `instruments/<library>/<bank>/*.wav`. Top-level folders
+  are libraries (MT, SB, 90, …); each holds bank subfolders. The Main-page "Samples
+  Folder" param (`sample_lib`) switches library; `bank_a`/`bank_b` list every bank across
+  all libraries as `Library/Bank`. Filename conventions: `A2.wav`, `C#3.wav`, `60.wav`,
+  `prefix-8.wav` (sequential).
 - `scripts/{build,install,install_banks}.sh`, `scripts/Dockerfile`,
   `.github/workflows/release.yml`.
 
@@ -36,69 +43,96 @@ no note names. The parser maps `file_index N → MIDI = N + seq_base`. Default
 - `-37.wav` → MIDI 77 (F5)
 That's the M400 35-key keyboard plus 2 extras at the low end. `seq_base` is a
 menu param so other sample packs with different bottom notes can be loaded.
+Note-name matching requires a **word boundary** (start of string or preceded by a
+non-alpha char) so bank names like `MkiiFlute-1.wav` don't false-match `e-1` inside the
+name (v0.1.6 fix — the `trailing_seq` sequential parser then wins correctly).
 
 ## Pipeline state
-- Stage 1 DESIGN ✅ · Stage 2 FETCH ✅ (Essaim/Modes/Structor/Spectra/Denis surveyed,
-  schwung-sfz cloned for reference) · Stage 3 SCAFFOLD ✅ · Stage 4 CODE ✅
-- Stage 5 DSP REVIEW ✅ (multiple audit passes; v0.1.24 hygiene + CPU optimisation
-  pass landed all critical findings) · Stage 6 BUILD ✅ (Docker ARM64) · Stage 7
-  USER TESTS ON MOVE ✅ (extensive iteration v0.1.1 → v0.1.24, all FX retuned to
-  user feedback) · Stage 8 UI REVIEW ✅ (menu reordered, Crossfade % added,
-  Auto Retune verified) · **Stage 9 RELEASE v0.1.0 ✅** (README + LICENSE drafted,
-  module.json + release.json aligned, workflow validated)
-- Next: Stage 10 — Schwung catalog PR (submit to Charles Vestal's manager repo
-  with download URL = `https://github.com/filliformes/mello-move/releases/download/v0.1.0/mello-module.tar.gz`).
+- Stages 1–8 ✅ (design → fetch → scaffold → code → DSP review → build → on-Move user
+  tests → UI review). Shipped iteratively v0.1.0 → **v0.1.8**; all FX hand-tuned to
+  on-device user feedback.
+- **Stage 9 RELEASE ✅ — latest v0.1.8** (2026-10-22). Pushing a `vX.Y.Z` tag triggers
+  `.github/workflows/release.yml`, which verifies tag == `module.json` version, builds the
+  ARM64 module, **auto-bumps `release.json`**, and publishes the GitHub release
+  (`dsp.so` + `mello-module.tar.gz` + `module.json`).
+- **v0.1.8 landed a full `dsp-review` audit pass:** sample rate corrected 48000 → **44100**
+  (Move native — playback had been ~1.5 semitones flat); FX 2 page + `reverse`/`bias`/
+  `mech`/`sample_start` now persist via `get_param("state")`; `chain_params` builder
+  snprintf hardened against overflow; reverb all-pass denormal guards; per-instance
+  voice-age counter (was a shared `static`).
+- Next: **Stage 10 — Schwung catalog PR** (submit to Charles Vestal's manager repo),
+  download URL =
+  `https://github.com/filliformes/mello-move/releases/download/v0.1.8/mello-module.tar.gz`.
 
 ## Critical constraints (sound generator)
+- **Sample rate is `44100`** (`#define SR 44100.0f` — Move native; every sibling module
+  uses 44100). Do NOT set 48000: `create_instance`'s `cfg` is ignored, so a mismatch
+  detunes all playback ~1.5 semitones and shifts every filter/LFO/time constant ~8.8 %.
+  Four hand-baked one-pole coeffs are pre-derived for 44100 and must be recomputed if SR
+  ever changes: leslie crossover `0.1077`, texture warmth `0.4343`, reverb loop-HPF
+  `0.9830`, tone-tilt pivot `0.1077` (all = the 44100 value of their labeled corner freq).
 - `plugin_api_v2_t` has **8 fields** incl. `get_error` (NULL) — omitting it SIGSEGVs.
 - **Sound generators MUST serve `ui_hierarchy` via `get_param`** — done.
 - DSP file installs as **`dsp.so`**, not `mello.so`. `chmod +x` after scp.
 - `get_param` returns **-1** for unknown keys (never 0). Enums return **string names**.
-- Steppers (`bank_a`/`bank_b`/`env_preset`/`tape_style`/`preamp_model`) accept either
-  numeric index or option string in `set_param` (done via registry).
-- No malloc / printf / locks in `render_block`. The `bank_lock` mutex protects bank
-  hot-swap during set_param — render briefly waits if a swap is mid-flight. Synchronous
-  bank load is acceptable for v0.1; v0.2 should move to async (pthread worker + atomic
-  pointer swap).
+- Steppers (`bank_a`/`bank_b`/`env_preset`/`tape_style`/`preamp_model`/`dist_style`/
+  `delay_type`/…) accept either numeric index or option string in `set_param` (registry +
+  `enum_index` strcmp-then-strtol fallback).
+- No malloc / printf / locks in `render_block`. Bank loading is **async**: `set_param`
+  posts a request, a per-slot worker (`bank_loader_thread`) loads off-thread, and
+  `render_block` swaps it in via `check_and_swap_pending()` under `bank_lock`. The initial
+  load in `create_instance` is synchronous (one-time, acceptable). `destroy_instance`
+  signals + joins both workers before freeing.
+- `get_param("state")` / `set_param("state")` round-trip the full patch as a
+  space-separated `key=value` string (NOT JSON — the host stores it opaquely). Every
+  user-settable param must appear in the `state` getter or it silently resets on reload.
 - C decl order: tables/consts before functions that use them.
-- Install base path differs by framework install: `MOVE_BASE` defaults to
-  `/data/UserData/schwung/modules/sound_generators`; the DSP probes both that and
-  `/data/UserData/move-anything/modules/sound_generators` at init.
+- Install base path differs by framework install: defaults to
+  `/data/UserData/schwung/modules/sound_generators`; `detect_instruments_dir` probes both
+  that and `/data/UserData/move-anything/modules/sound_generators` at init. (On some
+  devices move-anything is a symlink to the schwung tree — one copy, both paths.)
 - Power-cycle the Move to pick up module.json changes (cached at startup).
 
 ## Memory budget
-- Each bank: 37 WAVs × ~16 frames-per-mono × 16-bit = ~30 MB. Loading 2 banks = ~60 MB.
-  Plenty of headroom on Move's 4 GB. Banks load synchronously on `bank_a`/`bank_b`
-  change — typical ~0.5–1 s glitch.
+- Each bank: ~37 WAVs ≈ ~30 MB. Two banks (A + B) ≈ ~60 MB — plenty of headroom on Move's
+  4 GB. Runtime `bank_a`/`bank_b` changes load on a worker thread (no audio-thread stall);
+  active voices fast-release first so the swap is inaudible.
 
-## CPU budget (ARM Cortex-A72 @ 48 kHz × 128 frames/block ≈ 375 blocks/sec)
-- 16 voices × 2 banks = 32 mono voices × ~13 ops/sample = ~400 ops/sample
-- Tape + preamp + tone + 8 FX + limiter = ~250 ops/sample
-- Total ≈ 650 ops/sample, ~6 % of one core. Plenty of room.
+## CPU budget (ARM Cortex-A72 @ 44.1 kHz × 128 frames/block ≈ 345 blocks/sec)
+- 16 voices × 2 banks = 32 mono voices × ~13 ops/sample ≈ ~400 ops/sample
+- Tape + preamp + tone + FX 1 (8 macros) + FX 2 (distortion + Frippertronics) + limiter
+  ≈ ~300 ops/sample
+- Total ≈ ~700 ops/sample. Trig is hoisted to block rate (quadrature oscillators) across
+  vibrato / leslie / reverb LFOs. Comfortable on one core.
 
 ## DSP reference modules (extraction map)
 - **schwung-sfz (parent)** — migrated to xsynth/Rust; we don't depend on either.
   Reference for build patterns + ui_hierarchy shape only.
 - **Essaim** — tape warble LFO (smooth sine 0.05–0.3 Hz), tape-hiss with signal-gate,
   saturation curve (`drive = 1 + sat²·N`, RMS-comp makeup), BBD delay (2-pole cascade
-  + jitter LFO), smooth LFO shapes (Soft Saw, Soft Square, Skewed Sine, Warm Pulse).
-  Mello adds: flutter LFO (6.5 Hz + noise, not in Essaim), random dropouts (not in
-  Essaim), grit/crackle.
+  + jitter LFO). Mello adds: flutter LFO (6.5 Hz + noise), random dropouts, grit/crackle.
 - **Modes** — pop-free bipolar DJ filter (3-stage biquad cascade, LP/HP crossfade
   ±0.05 around 0.5, biquad memset on flip). Copied verbatim.
 - **Structor / Spectra / Dissolver** — granular OLA reference. Mello rolls a leaner
-  single-stream grain cloud (~100 lines) + SVF bandpass shimmer (~30 lines) + 1-tap
-  echo + bit-crush, all on one ribbon to mimic the Kiviak WoFi Texturer.
+  single-stream grain cloud + SVF bandpass shimmer + 1-tap echo to mimic the Kiviak WoFi
+  Texturer.
+- **KrautDrums** — the Frippertronics tape-delay voicings + several tape saturation curves
+  are ported from here (and it, like every sibling, runs at 44100 — see SR constraint).
+- **Super Boum** — drive-mix RMS level-matching pattern (used by FX 2 distortion), the
+  `state` round-trip reference, 'age' output ducking.
 - **Denis** — preset apply + snap smoothed values pattern.
 - **Phasma** — line-in / mapped-memory (kept in design for v0.2 live sampling).
 
 ## Build / deploy / release
 ```
 ./scripts/build.sh         # Docker ARM64 cross-compile (docker create+cp pattern)
-./scripts/install.sh       # scp dsp.so + module.json (fast)
-./scripts/install_banks.sh # rsync ~1 GB of WAVs (slow, one-time)
+./scripts/install.sh       # scp dsp.so + module.json + help.json (fast), md5-verified
+./scripts/install_banks.sh # rsync the WAV library (slow, one-time)
 ```
-Release via `/move-schwung-release 0.1.0` (tag v0.1.0 must equal module.json version).
+Release: bump `src/module.json` `version`, commit, then push a matching annotated tag
+(`git tag -a vX.Y.Z -m "…" && git push origin vX.Y.Z`). The Release workflow verifies the
+tag equals `module.json` (CI fails otherwise), builds, **auto-bumps `release.json`**
+(don't hand-edit it), and publishes the GitHub release. Latest: **v0.1.8**.
 
 ## v0.1 design principle (locked)
 
@@ -111,55 +145,70 @@ and Hera (~800 LOC C++ chorus) were reverted on 2026-05-23 once it became clear
 they violated the simplexity rule. The tape character and the chorus stay
 in-house, tuned to be musical across the full range of the knob.
 
-## v0.1 Texturizer + Reverb refinements (Ambiotica-inspired, in-house)
+## FX 1 rack (8 macros, `fx_chain` reorders them)
+Vibrato/Chorus · Rotary (physical-model Leslie) · DJ Filter (bipolar LP/HP) · Tremolo ·
+Auto-Wah (envelope BPF) · Texturizer · Delay (BBD) · Reverb (6-tap modulated).
+Every stage is **always-run** (state tracks the dry signal continuously) so engaging a
+knob never surfaces stale audio — the knob only gates the wet mix. Exact LFO rates,
+coefficients and knob zones live in the code comments (they've been retuned many times to
+on-device feedback; treat the source as ground truth, not any single number here).
 
-- **Texturizer (`fx_texture`)**:
-  - **Power-chord pitch quantization** for grains — unison / ±octave / ±perfect-fifth.
-    Scatter probability widens with the knob (low = mostly unison, high = all five
-    intervals equiprobable). This is the secret to grain clouds sounding musical.
-  - **Auto-freeze at amt ≥ 0.95** — new grains stop spawning, existing ones loop
-    forever. No separate freeze toggle (Ambiotica UX win).
-  - **Soft-sat in echo feedback** — `x / (1 + |0.8x|)` instead of raw clip. Echo
-    tap fixed to 8000 samples (167 ms) so it fits inside the 8192-sample ring.
-  - Knob zones (musical at every spot): 0–5 % bypass · 5–30 % subtle live grain
-    cloud · 30–55 % + shimmer · 55–80 % + echo · 80–95 % + bit-crush · 95–100 %
-    freeze.
+## FX 2 page + sample libraries (v0.1.5+)
+- **Distortion** (`dist_style` / `dist_drive` / `dist_tone` / `dist_blend`): 7 styles —
+  Tube, Fuzz, Crimson, Wavefold, Bitcrush, Spiral, RAT (last two from Airwindows, MIT).
+  RMS level-matched so Drive never raises perceived loudness; tone-tilt + equal-power blend.
+- **Frippertronics** (`delay_type` / `fripp_time` / `fripp_fb` / `fripp_age` / `fripp_mix`):
+  3 tape-delay voicings — Echoplex EP-3 (Tape), Binson Echorec (Magnetic), Roland RE-201
+  (Space). 8 s buffer; per-voicing `fb_cap` just above unity for controlled self-osc
+  (tanh bounds the runaway); `Age` compounds HF rolloff + saturation + wow/flutter.
+- **`dist_position`** (Pre / In-Loop / Post) sequences distortion against Frippertronics;
+  In-Loop injects extra saturation into the feedback path (dirt grows over repeats).
+- **10 FX-chain routings** (`fx_chain`): Classic, Pedalboard, Wet Swirl, Ambient Wash,
+  Dub, Reverse, Frippertronics, Wall of Orchestra, Loop Chaos, Dirty Cabinet.
+- **Two-tier sample libraries** + per-bank peak-normalise (`bank_gain`, target 0.35) so
+  packs switch at consistent loudness with headroom to drive the preamp/tape stages.
 
-- **Reverb (`fx_reverb`)**: **6 async LFOs** at incommensurate rates (0.33 / 0.47
-  / 0.61 / 0.79 / 0.93 / 1.13 Hz) modulate the 6 comb-tap read offsets by ±3..±8
-  samples. At low knob settings the reverb is nearly static; at high settings it
-  breathes organically. No new state — phases derived from existing
-  `flutter_phase` with per-tap rotational offsets.
+## Tape stage (Super Boum + KrautDrums)
+- **Per-style saturation curves** (each `tape_style` has its own harmonic identity):
+  Off = bypass · Clean = gentle tanh · M400 = cubic soft-clip (3rd-harmonic) · MkII = asym
+  tanh (2nd-harmonic tube warmth) · M300 = classic tanh + RMS makeup · Worn = asym+cubic
+  blend, hot.
+- **Peaking biquad head-bump** at 120 Hz, per-style base dB + `tape_sat` modulation.
+- **Age ducking**: degrade both ADDS noise/dropouts/grit AND removes up to 25 % level.
+- Helpers above `apply_tape_stage`: `biquad_proc`, `biquad_set_{lpf,hpf,peaking,bpf}`,
+  `tape_cubic`, `tape_asym`.
 
-## v0.1 tape stage upgrades (Super Boum + KrautDrums)
+## Texturizer (Ambiotica-inspired, in-house)
+- **Power-chord pitch quantization** for grains — unison / ±octave / ±perfect-fifth;
+  scatter probability widens with the knob (low = mostly unison). This is the secret to
+  grain clouds sounding musical.
+- **Auto-freeze near full knob** — new grains stop spawning, existing ones loop forever
+  (no separate toggle). Shimmer SVF + soft-sat 1-tap echo + analog-warmth LP layer in as
+  the knob climbs. Exact zone boundaries are in the code (remapped in v0.1.20).
 
-- **Per-style saturation curves** (each tape_style has its own harmonic identity):
-  - Clean = linear
-  - M400 = KrautDrums **cubic** soft-clip → 3rd-harmonic emphasis
-  - MkII = KrautDrums **asymmetric tanh** → 2nd-harmonic tube warmth
-  - M300 = classic tanh + RMS makeup (neutral)
-  - Worn = asym + cubic blend, hot
-- **Peaking biquad head-bump** at 120 Hz, Q=1.5, per-style base dB (Clean 0 / M400 2 / MkII 3 / M300 1.5 / Worn 4) + `tape_sat * 3 dB` modulation. Authentic tape-head low-mid resonance.
-- **Age ducking**: degrade reduces output by up to 25 % (Super Boum 'age' technique). Now degrade both ADDS noise AND removes level — closer to real tape wear.
-
-Helpers consolidated above `apply_tape_stage`: `biquad_proc`, `biquad_set_{lpf,hpf,peaking}`, `tape_cubic`, `tape_asym`.
-
-## v0.1 extras (added from Mellotron VST references — Arturia / M-Tron Pro IV / IK SampleTron 2 / AIR / Microtron)
+## v0.1 extras (from Arturia / M-Tron Pro IV / IK SampleTron 2 / AIR / Microtron refs)
 
 | Feature | Param key | Where | Notes |
 | --- | --- | --- | --- |
 | Tape Reverse | `reverse` (enum) | Main menu | Voice's `base_rate` is negated; read_pos decrements from end |
-| Aftertouch → flutter | (no param) | `on_midi`, 0xA0/0xD0 | `m->at_flutter` adds to flutter depth; decays 3 %/block when pressure released |
-| Sample Start | `sample_start` (float 0..1) | Main menu | Skips fraction of WAV on note-on; combined with reverse, plays from `(1-start)*frames` |
-| Chiff (key-off retract) | `chiff` (existing knob) | Tape menu | Was unused; now triggers a brief LP-filtered noise burst (~80 ms) on every note release. CHIFF_POOL=8 polyphony |
-| Tape Bias | `bias` (float, 0.5 = neutral) | Tape menu | Bipolar offset to sat onset (low bias = harsher, more drive) + HF rolloff (high bias = darker) |
+| Aftertouch → flutter | (no param) | `on_midi` 0xA0/0xD0 | `m->at_flutter` adds to flutter depth; decays ~3 %/block when released |
+| Pitch bend | (no param) | `on_midi` 0xE0 | ±2 semitones, smoothed into the per-sample rate |
+| Mod wheel | (no param) | `on_midi` CC1 | Adds to Vibrato depth (classic Mellotron wheel) |
+| Panic | (no param) | `on_midi` CC120/123 | All-sound-off / all-notes-off release every voice |
+| Sample Start | `sample_start` (float 0..1) | Main menu | Skips a fraction of the WAV on note-on; combines with reverse |
+| Sustain-loop crossfade | `xfade_pct` (int 0..100) | Main menu | Equal-power loop crossfade, ~5..130 ms |
+| Auto-Retune | `auto_retune` (enum) | Main menu | Autocorrelation + parabolic-interp detune correction (±8..35 cents), applied at note-on; default Off |
+| Chiff (key-off retract) | `chiff` (knob) | Tape menu | Brief LP-filtered noise burst (~80 ms) on note release; CHIFF_POOL=8 |
+| Tape Bias | `bias` (float, 0.5 = neutral) | Tape menu | Bipolar sat-onset offset + HF rolloff |
 | Mechanical Noise | `mech` (float) | Tape menu | Sub-300 Hz transport rumble + random clicks; mixed in pre-tape |
-| Instability | (under `flutter`) | code-only | At `flutter > 0.7`, adds slow random pitch wander (50 cent depth scaled by flutter overage). RNG updates ~5 Hz, smoothed |
-| Bank C | `bank_c` (enum) + `c_level` (float) | Main menu | 3rd bank layered additively; `c_level=0` skips render. Adds 16 voices to the worst case (48 total) |
+| Instability | (under `flutter`) | code-only | At `flutter > 0.7`, slow random pitch wander scaled by the overage |
 
 ## Open items / v0.2
-- Async bank loading (pthread worker + atomic pointer swap) so bank changes don't glitch.
 - Live sampling (SK-1 "sample the world") via mapped_memory + audio_in_offset (Phasma).
-- Velocity-layered/round-robin support if we add user banks beyond simple Mellotron sets.
+- Velocity-layered / round-robin support if we add user banks beyond simple Mellotron sets.
 - Per-bank `seq_base` override (currently global).
 - Leisureland licensing — check terms before distributing factory content beyond personal use.
+- Cosmetic cleanups flagged by the v0.1.8 audit: the `"Crossfade %"` literal `%` in the
+  `chain_params` format string (works on glibc but technically UB — escape as `%%`);
+  `MIDI_FREQ[128]` has 4 excess initialiser entries past index 127 (harmless — the
+  compiler trims them; size the array or drop the extras to silence the warning).
