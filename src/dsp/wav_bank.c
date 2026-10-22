@@ -373,156 +373,114 @@ static float ac_at(const int16_t *samples, int win_start, int win_len,
     return sum_ab / denom;
 }
 
-/* Auto Retune — estimate the deviation between a sample's fundamental and
- * the MIDI note we mapped it to, return the CORRECTION in cents that the
- * voice should add to its playback pitch.
+/* Shrink *win_len so the analysis window plus the largest lag stays inside
+ * the sample (ac_peak / ac_at read samples[start + n + p] for n < win_len,
+ * p <= max_p).  Returns 0 if less than 1/8 s of window remains. */
+static int fit_window(int frames, int start, int *win_len, int max_p, int sr) {
+    int room = frames - start - max_p - 2;
+    if (*win_len > room) *win_len = room;
+    return *win_len >= sr / 8;
+}
+
+/* Fractional period of the strongest correlation peak in [min_p, max_p]:
+ * decimated coarse search, full-resolution refine around the winner, then
+ * parabolic interpolation for sub-sample precision.  An integer period has
+ * a quantisation step of ~25 cents at F5 (period ~70 samples), so the vertex
+ * fit is what makes high notes measurable at all.
  *
- * Three-stage pipeline:
- *   1. PRE-ANALYZE: autocorrelate within ±100 cents (one semitone) of the
- *      MIDI table's target period.  Narrow window prevents octave/harmonic
- *      mis-detection — the most common autocorrelation failure mode.
- *   2. CORRECT: compute cents = 1200·log2(det_freq / target_freq).  Reject
- *      if confidence is low (<0.85), if |cents| is implausibly small (<3,
- *      not worth correcting) or large (>35, almost certainly a bad pitch
- *      detection).
- *   3. VERIFY: re-run the autocorrelation with the DETECTED frequency as
- *      the new target.  A real detune produces a sharp peak that lines up
- *      with itself on re-detect (re-cents ≈ 0).  A spurious detection
- *      makes the peak shift in the verification pass and we reject the
- *      correction.  This is the "make sure it's better, not worse" check
- *      the user requested.
+ * alpha, beta and gamma are ALL full-resolution (step 1).  The coarse corr
+ * is computed on a decimated window and isn't comparable, so the refined
+ * peak is always adopted — mixing resolutions lets alpha/gamma land above
+ * beta, flips the curvature sign and silently disables the fit.
+ * Returns 0 when no peak clears `conf`. */
+static int estimate_period(const int16_t *samples, int win_start, int win_len,
+                           int min_p, int max_p, float conf, float *out_period) {
+    const int step = 8;
+    float corr;
+    int best = ac_peak(samples, win_start, win_len, min_p, max_p, step, &corr);
+    if (best < 0 || corr < conf) return 0;
+    int lo = best - step; if (lo < min_p) lo = min_p;
+    int hi = best + step; if (hi > max_p) hi = max_p;
+    best = ac_peak(samples, win_start, win_len, lo, hi, 1, &corr);
+    if (best <= 0 || corr < conf) return 0;
+
+    float period = (float)best;
+    if (best > min_p && best < max_p) {
+        float alpha = ac_at(samples, win_start, win_len, 1, best - 1);
+        float gamma = ac_at(samples, win_start, win_len, 1, best + 1);
+        if (alpha >= 0.0f && gamma >= 0.0f) {
+            /* Only valid at a true peak (parabola curving down, denom < 0);
+             * a broad flat peak would amplify noise into a wild offset, so
+             * fall back to the integer period there. */
+            float denom = alpha - 2.0f * corr + gamma;
+            if (denom < -1e-4f) {
+                float off = 0.5f * (alpha - gamma) / denom;
+                if (off > -1.0f && off < 1.0f) period += off;
+            }
+        }
+    }
+    *out_period = period;
+    return 1;
+}
+
+/* Auto Retune — estimate how far a sample's fundamental sits from the MIDI
+ * note it is mapped to, and return the CORRECTION in cents to add to its
+ * playback pitch (0 = leave it alone).
  *
- * Cost ≈ 70 k mul-adds per sample (search+refine+verify) → <2 ms per WAV
- * at 48 kHz, ~70 ms per bank load.  Runs once on the worker thread. */
+ *   1. MEASURE on window A, 30 % into the sample (40 % below D3, where the
+ *      tape is still settling).  Search only +/-100 cents around the mapped
+ *      note so an octave or harmonic can't win.  Reject low-confidence peaks
+ *      (below D3, choirs/strings/organ give broad noisy peaks, so the floor
+ *      is higher) and deviations outside the plausible band: [8, 35] cents,
+ *      or [12, 30] below D3 where natural wobble raises the noise floor.
+ *   2. VERIFY on an independent window B, 65 % in.  A genuine detune is a
+ *      property of the whole tape, so B must reproduce A's period within
+ *      5 cents; a spurious hit (transient, wobble, noise) won't.  Both
+ *      periods are fractional, so quantisation can never fail a good
+ *      correction.  v0.1.8 re-ran the search on the SAME window at INTEGER
+ *      resolution — up to 8.6 cents of quantisation at A4 against the 5 c
+ *      tolerance — and so rejected about half of the genuine corrections.
+ *   A sample too short for two windows is unverifiable: no correction.
+ *
+ * Runs once per WAV at bank-scan time, off the audio thread. */
 static float detect_pitch_cents(const int16_t *samples, int frames,
                                 int sr, int midi_note) {
-    if (!samples || frames <= 0) return 0.0f;
+    if (!samples || frames <= 0 || sr <= 0) return 0.0f;
     if (midi_note < 0 || midi_note > 127) return 0.0f;
 
     float exp_freq = MIDI_FREQ[midi_note];
     if (exp_freq < 30.0f || exp_freq > 3000.0f) return 0.0f;
     float exp_period = (float)sr / exp_freq;
+    int   low  = (midi_note < 50);
+    float conf = low ? 0.93f : 0.90f;
 
-    /* MIDI-aware window placement: low-pitched samples (below D3) often
-     * have longer attack tails where the tape is still settling — start
-     * the analysis 40 % into the sample for those instead of the usual
-     * 30 %, so we hit steady-state pitch reliably. */
-    const int step = 8;
-    int win_start = (midi_note < 50) ? (frames * 40 / 100)
-                                      : (frames * 30 / 100);
-    int win_len   = sr * 4 / 10;
-    if (win_start + win_len + (int)(exp_period * 1.1f) >= frames) {
-        win_len = frames - win_start - (int)(exp_period * 1.1f) - 1;
-    }
-    if (win_len < sr / 8) return 0.0f;
-
-    /* ±100 cents window (period factor 2^(±1/12) ≈ 0.9439..1.0595). */
-    int min_p = (int)(exp_period * 0.9439f);  if (min_p < 8) min_p = 8;
+    /* 1. Measure on window A — period factor 2^(+/-1/12) = 0.9439..1.0595. */
+    int min_p = (int)(exp_period * 0.9439f); if (min_p < 8) min_p = 8;
     int max_p = (int)(exp_period * 1.0595f);
-    if (max_p >= frames - win_start) return 0.0f;
     if (max_p <= min_p) return 0.0f;
+    int start_a = frames * (low ? 40 : 30) / 100;
+    int len_a   = sr * 4 / 10;
+    if (!fit_window(frames, start_a, &len_a, max_p, sr)) return 0.0f;
+    float per_a;
+    if (!estimate_period(samples, start_a, len_a, min_p, max_p, conf, &per_a)) return 0.0f;
 
-    /* Stage 1: coarse search. */
-    float best_corr;
-    int   best_period = ac_peak(samples, win_start, win_len,
-                                min_p, max_p, step, &best_corr);
-    /* MIDI-aware confidence floor.  Low-pitched samples (often multi-
-     * voice choirs, full string sections, organ stops) have harmonic
-     * content that produces broader, noisier correlation peaks.  Require
-     * a HIGHER confidence in that range to reject false detunings the
-     * user reported as "wrong notes in the low range". */
-    float conf_floor = (midi_note < 50) ? 0.93f : 0.90f;
-    if (best_period < 0 || best_corr < conf_floor) return 0.0f;
+    float cents = 1200.0f * log2f(exp_period / per_a);    /* + = sample is sharp */
+    float c_lo  = low ? 12.0f : 8.0f;
+    float c_hi  = low ? 30.0f : 35.0f;
+    if (fabsf(cents) < c_lo || fabsf(cents) > c_hi) return 0.0f;
 
-    /* Stage 1b: refine to sample-accurate period around the coarse winner. */
-    int refine_lo = best_period - step; if (refine_lo < min_p) refine_lo = min_p;
-    int refine_hi = best_period + step; if (refine_hi > max_p) refine_hi = max_p;
-    {
-        float refined_corr;
-        int   refined_p = ac_peak(samples, win_start, win_len,
-                                  refine_lo, refine_hi, 1, &refined_corr);
-        if (refined_p >= 0 && refined_corr > best_corr) {
-            best_corr   = refined_corr;
-            best_period = refined_p;
-        }
-    }
-    if (best_period <= 0) return 0.0f;
+    /* 2. Verify on window B (after A, never overlapping it), +/-3 % around A. */
+    int v_lo = (int)(per_a * 0.97f); if (v_lo < 8) v_lo = 8;
+    int v_hi = (int)(per_a * 1.03f) + 1;
+    int start_b = frames * 65 / 100;
+    if (start_b < start_a + len_a) start_b = start_a + len_a;
+    int len_b = sr * 4 / 10;
+    if (!fit_window(frames, start_b, &len_b, v_hi, sr)) return 0.0f;
+    float per_b;
+    if (!estimate_period(samples, start_b, len_b, v_lo, v_hi, conf, &per_b)) return 0.0f;
+    if (fabsf(1200.0f * log2f(per_a / per_b)) > 5.0f) return 0.0f;
 
-    /* Stage 1c: PARABOLIC INTERPOLATION.  The previous version used the
-     * integer period as-is, which for a high-pitched note (period ~70
-     * samples at F5) has a quantisation step of ~25 cents — and the
-     * search's `c > best` strict-greater rule consistently broke ties in
-     * favour of the FIRST-found = SHORTEST period = HIGHEST detected
-     * freq.  Net result: detection biased sharp → correction biased
-     * negative → user's "everything goes flat" symptom.
-     *
-     * Parabolic fit around the peak gives sub-sample precision and is
-     * unbiased.  Use neighbours best_period ± 1 to fit y = a·x² + b·x + c
-     * and find the vertex offset. */
-    float det_period = (float)best_period;
-    if (best_period > min_p && best_period < max_p) {
-        /* CRITICAL: use step=1 for alpha and gamma so they're at the same
-         * resolution as `beta` (which the refine pass above computed with
-         * step=1).  The previous version passed the file-scope `step=8`
-         * here, which decimated alpha/gamma 8× while beta was full-res.
-         * For sharp high-note peaks the decimated values could land
-         * ABOVE the full-res beta, making denom positive (a positive
-         * curvature) — the strict downward-curvature guard would then
-         * reject parabolic refinement and fall back to integer period,
-         * reintroducing the v0.1.26 sharp-bias that drives notes flat.
-         * With matched resolution, alpha and gamma are always ≤ beta
-         * and the parabolic interp is unbiased. */
-        float alpha = ac_at(samples, win_start, win_len, 1, best_period - 1);
-        float beta  = best_corr;
-        float gamma = ac_at(samples, win_start, win_len, 1, best_period + 1);
-        if (alpha >= 0.0f && gamma >= 0.0f) {
-            float denom = alpha - 2.0f * beta + gamma;
-            /* Parabolic interp is only valid at a TRUE peak (parabola
-             * curving DOWN → denom < 0).  At broad low-pitch peaks the
-             * curvature can land near zero, in which case the vertex
-             * formula amplifies noise into a wild fractional offset.
-             * Require strong downward curvature; if the peak is too
-             * flat, fall back to the integer period. */
-            if (denom < -1e-4f) {
-                float offset = 0.5f * (alpha - gamma) / denom;
-                if (offset > -1.0f && offset < 1.0f) {
-                    det_period = (float)best_period + offset;
-                }
-            }
-        }
-    }
-
-    float det_freq = (float)sr / det_period;
-    float cents    = 1200.0f * logf(det_freq / exp_freq) / logf(2.0f);
-
-    /* MIDI-aware cents bounds:
-     *   Below D3 (MIDI 50): [12, 30] cents — be conservative.  Low
-     *     Mellotron content has natural pitch wobble and low-Q
-     *     correlation peaks; only apply corrections that are clearly
-     *     larger than the detection noise floor (~10 cents at low pitch)
-     *     and clearly smaller than what a harmonic mis-detection would
-     *     produce.
-     *   Above D3: [8, 35] cents — standard range. */
-    float cents_lo = (midi_note < 50) ? 12.0f : 8.0f;
-    float cents_hi = (midi_note < 50) ? 30.0f : 35.0f;
-    if (fabsf(cents) < cents_lo || fabsf(cents) > cents_hi) return 0.0f;
-
-    /* Stage 3: VERIFY.  Re-run the autocorrelation with det_freq as the
-     * new target.  If the correction is real the peak should sit at the
-     * same period we just found → re-cents ≈ 0.  If it has moved, the
-     * original detection was spurious and the correction would make
-     * playback worse, not better. */
-    int v_lo = (int)(det_period * 0.97f); if (v_lo < 8) v_lo = 8;
-    int v_hi = (int)(det_period * 1.03f);
-    if (v_hi >= frames - win_start) return 0.0f;
-    float v_corr;
-    int   v_period = ac_peak(samples, win_start, win_len, v_lo, v_hi, 1, &v_corr);
-    if (v_period < 0 || v_corr < conf_floor) return 0.0f;
-    float v_freq  = (float)sr / (float)v_period;
-    float v_cents = 1200.0f * logf(v_freq / det_freq) / logf(2.0f);
-    if (fabsf(v_cents) > 5.0f) return 0.0f;       /* verification failed */
-
-    return -cents;                                /* CORRECTION to playback */
+    return -cents;                                         /* CORRECTION to playback */
 }
 
 int mello_bank_scan(const char *dir, mello_bank_t *bank, int seq_base) {

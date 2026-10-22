@@ -60,6 +60,13 @@ name (v0.1.6 fix — the `trailing_seq` sequential parser then wins correctly).
   `mech`/`sample_start` now persist via `get_param("state")`; `chain_params` builder
   snprintf hardened against overflow; reverb all-pass denormal guards; per-instance
   voice-age counter (was a shared `static`).
+- **Unreleased (post-v0.1.8), from a second `dsp-review` pass verified on an aarch64
+  harness:** `fast_exp2` replaced (pitch was off by up to 70 cents); reverb gets an
+  in-loop ~20 Hz DC blocker (the loop's DC gain is > 1 above ~16 % Reverb and latched a
+  +0.58 offset, even from silence); the outgoing bank is freed by the worker instead of on
+  the audio thread; Auto-Retune verifies on an independent window at fractional-period
+  resolution. Still open from that review: bank_a/bank_b declare 180 options on the
+  author's Move against the host's 128-option enum cap.
 - Next: **Stage 10 — Schwung catalog PR** (submit to Charles Vestal's manager repo),
   download URL =
   `https://github.com/filliformes/mello-move/releases/download/v0.1.8/mello-module.tar.gz`.
@@ -78,11 +85,18 @@ name (v0.1.6 fix — the `trailing_seq` sequential parser then wins correctly).
 - Steppers (`bank_a`/`bank_b`/`env_preset`/`tape_style`/`preamp_model`/`dist_style`/
   `delay_type`/…) accept either numeric index or option string in `set_param` (registry +
   `enum_index` strcmp-then-strtol fallback).
-- No malloc / printf / locks in `render_block`. Bank loading is **async**: `set_param`
-  posts a request, a per-slot worker (`bank_loader_thread`) loads off-thread, and
-  `render_block` swaps it in via `check_and_swap_pending()` under `bank_lock`. The initial
-  load in `create_instance` is synchronous (one-time, acceptable). `destroy_instance`
-  signals + joins both workers before freeing.
+- No malloc / **free** / printf / waiting on the worker in `render_block`. Bank loading is
+  **async**: `set_param` posts a request, a per-slot worker (`bank_loader_thread`) loads
+  off-thread, and `render_block` swaps it in via `check_and_swap_pending()` (a `trylock` —
+  it never waits on the worker). The outgoing bank is parked in `retired_bank` and **freed
+  by the worker**: freeing a bank is dozens of `munmap()`s and must never run on the
+  callback. The initial load in `create_instance` is synchronous (one-time, acceptable).
+  `destroy_instance` signals + joins both workers, then drains pending/retired banks.
+- **`fast_exp2` drives every pitch path** (Pitch knob, bend, fallback notes,
+  wow/flutter/aftertouch, Auto-Retune, envelope curves). Its mantissa polynomial must keep
+  p(0) = 1 and p(1) = 2 exactly. The v0.1.8 cubic had p(1) = 1.961 and detuned up to
+  70 cents (−34 c on any negative input, so even Pitch +12 played flat). Re-run the DSP
+  harness if it is ever touched.
 - `get_param("state")` / `set_param("state")` round-trip the full patch as a
   space-separated `key=value` string (NOT JSON — the host stores it opaquely). Every
   user-settable param must appear in the `state` getter or it silently resets on reload.

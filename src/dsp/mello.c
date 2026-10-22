@@ -176,6 +176,11 @@ typedef struct {
     mello_bank_t      pending_bank;
     int               pending_idx;
     volatile int      pending_ready;
+    /* The bank replaced by the last swap.  The audio thread only hands it
+     * over; the worker frees it — free() of a whole bank is dozens of
+     * munmap()s that must never run on the audio callback. */
+    mello_bank_t      retired_bank;
+    volatile int      retired_ready;
     pthread_mutex_t   loader_mtx;
     pthread_cond_t    loader_cv;
     pthread_t         loader_tid;
@@ -292,6 +297,13 @@ typedef struct {
      * happens when sustained low notes accumulate in the diffuser loop
      * (user-reported "really big build up in the low sub frequencies"). */
     float hpf_x1, hpf_y1;
+    /* ~20 Hz DC blocker INSIDE the feedback loop.  The 6-tap sum is scaled
+     * 0.33 (not 1/6) for wet presence, which also puts the loop's DC gain at
+     * (6 · 0.33 · decay)² > 1 once decay > 0.505 (Reverb above ~16 %).  The
+     * 120 Hz HPF above only cleans the loop INPUT, so without this blocker the
+     * loop latched onto a DC offset of up to +0.58 within seconds — even from
+     * pure silence, seeded by the denormal guards. */
+    float dc_x_l, dc_y_l, dc_x_r, dc_y_r;
     /* "Off-state" detector — when amt has been below threshold for a
      * full quiet window, we zero out the loop state so the comb network's
      * natural resonance can't keep ringing audibly on residual content
@@ -663,13 +675,24 @@ static inline float randf01(uint32_t *s) {
 }
 static inline float lerpf(float a, float b, float t) { return a + (b - a) * t; }
 
-/* fast 2^x approximation, good for varispeed pitch */
+/* fast 2^x: exponent bits from floor(x), mantissa from a degree-4 polynomial
+ * fitted to 2^f on [0,1) with p(0) = 1 and p(1) = 2 enforced, so there is no
+ * step at integer boundaries.  Worst error 0.006 cents.
+ *
+ * The previous cubic had p(1) = 1.961: up to -70 cents of detune on the Pitch
+ * knob (Pitch +12 played -34 c because the smoother approaches 12 from below),
+ * pitch bend and fallback notes, plus a -34 cent step for ANY negative input —
+ * every wow/flutter/aftertouch half-cycle and every negative Auto-Retune
+ * correction.  Measured on the v0.1.8 DSP harness. */
 static inline float fast_exp2(float x) {
-    float xx = x - floorf(x);
-    float frac = xx * (xx * (0.336262f * xx - 0.034889f) + 0.659896f) + 1.000000f;
-    int   ix   = (int)floorf(x);
+    if (x < -126.0f) x = -126.0f;                  /* keep the exponent field valid */
+    if (x >  127.0f) x =  127.0f;
+    float fl   = floorf(x);
+    float xx   = x - fl;
+    float frac = 1.0f + xx * (0.693032967f + xx * (0.241369788f +
+                         xx * (0.052054818f + xx * 0.013542428f)));
     union { uint32_t u; float f; } u;
-    u.u = ((uint32_t)(ix + 127)) << 23;
+    u.u = ((uint32_t)((int)fl + 127)) << 23;
     return frac * u.f;
 }
 /* Fast log2 approximation — IEEE-754 exponent extraction + cubic mantissa
@@ -813,10 +836,20 @@ static void load_bank_slot(mello_t *m, bank_slot_t *slot, int idx) {
 static void *bank_loader_thread(void *arg) {
     bank_slot_t *slot = (bank_slot_t *)arg;
     mello_t     *m    = (mello_t *)slot->m_ref;
-    while (slot->loader_run) {
+    for (;;) {
         pthread_mutex_lock(&slot->loader_mtx);
-        while (slot->loader_run && slot->requested_idx < 0) {
+        while (slot->loader_run && slot->requested_idx < 0 && !slot->retired_ready) {
             pthread_cond_wait(&slot->loader_cv, &slot->loader_mtx);
+        }
+        /* Free the bank the audio thread retired at its last swap first — even
+         * on shutdown — so nothing is left for destroy_instance to clean up. */
+        if (slot->retired_ready) {
+            mello_bank_t old = slot->retired_bank;
+            memset(&slot->retired_bank, 0, sizeof(slot->retired_bank));
+            slot->retired_ready = 0;
+            pthread_mutex_unlock(&slot->loader_mtx);
+            mello_bank_free(&old);
+            continue;
         }
         if (!slot->loader_run) {
             pthread_mutex_unlock(&slot->loader_mtx);
@@ -841,14 +874,15 @@ static void *bank_loader_thread(void *arg) {
             mello_bank_free(&fresh);
             continue;
         }
-        if (slot->pending_ready) {
-            /* prior pending never consumed — replace it */
-            mello_bank_free(&slot->pending_bank);
-        }
+        /* A prior result the audio thread never consumed is replaced; free it
+         * AFTER unlocking so the audio thread never waits behind munmap(). */
+        mello_bank_t stale     = slot->pending_bank;
+        int          had_stale = slot->pending_ready;
         slot->pending_bank  = fresh;
         slot->pending_idx   = idx;
         slot->pending_ready = 1;
         pthread_mutex_unlock(&slot->loader_mtx);
+        if (had_stale) mello_bank_free(&stale);
     }
     return NULL;
 }
@@ -881,8 +915,12 @@ static void request_bank_load_async(mello_t *m, bank_slot_t *slot, int idx) {
  * if the worker has finished, atomically swaps the new bank into place. */
 static void check_and_swap_pending(mello_t *m, bank_slot_t *slot) {
     if (!slot->pending_ready) return;     /* fast path, no lock */
-    pthread_mutex_lock(&slot->loader_mtx);
-    if (!slot->pending_ready) {
+    /* Never block the callback on the worker: if it is mid-publish, retry on
+     * the next block.  Also wait (a block or two) while the previous retired
+     * bank is still queued for the worker to free — the handoff slot holds
+     * one bank. */
+    if (pthread_mutex_trylock(&slot->loader_mtx) != 0) return;
+    if (!slot->pending_ready || slot->retired_ready) {
         pthread_mutex_unlock(&slot->loader_mtx);
         return;
     }
@@ -890,17 +928,21 @@ static void check_and_swap_pending(mello_t *m, bank_slot_t *slot) {
     int          nidx  = slot->pending_idx;
     slot->pending_ready = 0;
     memset(&slot->pending_bank, 0, sizeof(slot->pending_bank));
-    pthread_mutex_unlock(&slot->loader_mtx);
 
     /* Swap into the live slot, holding the audio-thread bank_lock. Voices are
      * silenced — they had ~500 ms to fade via the pre-load fast-release, so
-     * setting active=0 here is inaudible. */
+     * setting active=0 here is inaudible.  (Lock order is always loader_mtx
+     * then bank_lock; nothing takes them the other way round.) */
     pthread_mutex_lock(&m->bank_lock);
     for (int i = 0; i < NUM_VOICES; i++) slot->voices[i].active = 0;
-    mello_bank_free(&slot->bank);
+    slot->retired_bank = slot->bank;      /* handed to the worker, not freed here */
     slot->bank = fresh;
     slot->loaded_idx = (fresh.count > 0) ? nidx : -1;
     pthread_mutex_unlock(&m->bank_lock);
+
+    slot->retired_ready = 1;
+    pthread_cond_signal(&slot->loader_cv);
+    pthread_mutex_unlock(&slot->loader_mtx);
 }
 
 /* ============================================================================
@@ -2326,6 +2368,15 @@ static void fx_reverb(mello_t *m, float *l, float *r, int frames) {
             fb_r = ar;
         }
 
+        /* In-loop DC blocker: y = x - x1 + R·y1, R = exp(-2π·20/SR).  Zero
+         * gain at DC stops the recirculation latching onto an offset; 20 Hz
+         * is far below anything the tail carries musically. */
+        const float DC_R = 0.997154f;
+        float dcl = fb_l - m->rev.dc_x_l + DC_R * m->rev.dc_y_l + 1e-25f;
+        float dcr = fb_r - m->rev.dc_x_r + DC_R * m->rev.dc_y_r + 1e-25f;
+        m->rev.dc_x_l = fb_l; m->rev.dc_y_l = dcl; fb_l = dcl;
+        m->rev.dc_x_r = fb_r; m->rev.dc_y_r = dcr; fb_r = dcr;
+
         /* Gate the loop INPUT by amt — when the knob is at zero, no fresh
          * signal enters the recirculating buffer, so the tail decays away
          * naturally and the user can't hear "the reverb that was always
@@ -2367,6 +2418,7 @@ static void fx_reverb(mello_t *m, float *l, float *r, int frames) {
             memset(m->rev.ap_r,  0, sizeof(m->rev.ap_r));
             m->rev.lp_l = m->rev.lp_r = 0.0f;
             m->rev.hpf_x1 = m->rev.hpf_y1 = 0.0f;
+            m->rev.dc_x_l = m->rev.dc_y_l = m->rev.dc_x_r = m->rev.dc_y_r = 0.0f;
             /* keep counter pinned so we don't re-zero every block */
             m->rev.off_counter = (int)(SR * 0.10f);
         }
@@ -3901,6 +3953,8 @@ static void destroy_instance(void *inst) {
     /* Drain any pending-but-unconsumed banks so we don't leak. */
     if (m->a.pending_ready) mello_bank_free(&m->a.pending_bank);
     if (m->b.pending_ready) mello_bank_free(&m->b.pending_bank);
+    if (m->a.retired_ready) mello_bank_free(&m->a.retired_bank);   /* normally already freed by the worker */
+    if (m->b.retired_ready) mello_bank_free(&m->b.retired_bank);
 
     mello_bank_free(&m->a.bank);
     mello_bank_free(&m->b.bank);
