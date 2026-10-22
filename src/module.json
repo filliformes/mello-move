@@ -17,112 +17,128 @@
     "component_type": "sound_generator",
     "ui_hierarchy": {
       "modes": null,
+      "pad_layout": "chromatic",
       "levels": {
         "root": {
           "name": "Mello",
-          "knobs": ["bank_a","bank_b","ab_mix","pitch","tone","env_preset","crunch","volume"],
+          "knobs": ["bank_a", "bank_b", "ab_mix", "pitch", "tone", "env_preset", "crunch", "volume"],
           "params": [
-            {"level": "Main",     "label": "Main"},
-            {"level": "FX 1",     "label": "FX 1"},
-            {"level": "FX 2",     "label": "FX 2"},
+            {"level": "Main", "label": "Main"},
             {"level": "Envelope", "label": "Envelope"},
-            {"level": "Tape",     "label": "Tape & Preamp"}
+            {"level": "FX 1", "label": "FX 1"},
+            {"level": "FX 2", "label": "FX 2"},
+            {"level": "FX Settings", "label": "FX Settings"},
+            {"level": "Tape", "label": "Tape"},
+            {"level": "Sample", "label": "Sample"},
+            {"level": "Setup", "label": "Setup"}
           ]
         },
         "Main": {
           "label": "Main",
-          "knobs": ["bank_a","bank_b","ab_mix","pitch","tone","env_preset","crunch","volume"],
-          "params": [
-            "sample_lib",
-            "bank_a","bank_b","ab_mix","pitch","tone","env_preset","crunch","volume",
-            "reverse","half_speed","sample_start","xfade_pct",
-            "loop_mode","map_mode","auto_retune","seq_base"
-          ]
+          "knobs": ["bank_a", "bank_b", "ab_mix", "pitch", "tone", "env_preset", "crunch", "volume"],
+          "params": ["bank_a", "bank_b", "ab_mix", "pitch", "tone", "env_preset", "crunch", "volume"]
         },
         "Envelope": {
           "label": "Envelope",
-          "knobs": ["env_preset","env_a","env_d","env_s","env_r","env_ac","env_rc","env_vel"],
-          "params": ["env_preset","env_a","env_d","env_s","env_r","env_ac","env_rc","env_vel"]
-        },
-        "Tape": {
-          "label": "Tape & Preamp",
-          "knobs": ["tape_style","warble","flutter","degrade","tape_sat","preamp_model","input_level","limiter"],
-          "params": ["tape_style","warble","flutter","degrade","tape_sat","preamp_model","input_level","limiter","tape_len","chiff","bias","mech"]
+          "knobs": ["env_a", "env_d", "env_s", "env_r", "env_ac", "env_rc", "env_vel", "env_preset"],
+          "params": ["env_a", "env_d", "env_s", "env_r", "env_ac", "env_rc", "env_vel", "env_preset"]
         },
         "FX 1": {
           "label": "FX 1",
-          "knobs": ["autowah","vibrato","tremolo","rotary","dj_filter","texture","delay","reverb"],
-          "params": ["fx_chain","autowah","vibrato","tremolo","rotary","dj_filter","texture","delay","reverb"]
+          "knobs": ["autowah", "vibrato", "tremolo", "rotary", "dj_filter", "texture", "delay", "reverb"],
+          "params": ["autowah", "vibrato", "tremolo", "rotary", "dj_filter", "texture", "delay", "reverb"]
         },
         "FX 2": {
           "label": "FX 2",
-          "knobs": ["dist_drive","dist_style","dist_tone","dist_blend","fripp_time","fripp_fb","fripp_age","fripp_mix"],
-          "params": ["dist_style","dist_drive","dist_tone","dist_blend","dist_position","delay_type","fripp_time","fripp_fb","fripp_age","fripp_mix"]
+          "knobs": ["dist_drive", "dist_style", "dist_tone", "dist_blend", "fripp_time", "fripp_fb", "fripp_age", "fripp_mix"],
+          "params": ["dist_drive", "dist_style", "dist_tone", "dist_blend", "fripp_time", "fripp_fb", "fripp_age", "fripp_mix"]
+        },
+        "FX Settings": {
+          "label": "FX Settings",
+          "knobs": ["fx_chain", "dist_position", "delay_type"],
+          "params": ["fx_chain", "dist_position", "delay_type"]
+        },
+        "Tape": {
+          "label": "Tape",
+          "knobs": ["tape_style", "warble", "flutter", "degrade", "tape_sat", "preamp_model", "input_level", "limiter"],
+          "params": ["tape_style", "warble", "flutter", "degrade", "tape_sat", "preamp_model", "input_level", "limiter", "tape_len", "chiff", "bias", "mech"]
+        },
+        "Sample": {
+          "label": "Sample",
+          "knobs": ["sample_start", "reverse", "half_speed", "loop_mode", "xfade_pct"],
+          "params": ["sample_start", "reverse", "half_speed", "loop_mode", "xfade_pct"]
+        },
+        "Setup": {
+          "label": "Setup",
+          "knobs": ["sample_lib", "map_mode", "auto_retune", "seq_base"],
+          "params": ["sample_lib", "map_mode", "auto_retune", "seq_base"]
         }
       }
     },
     "chain_params": [
-      {"key": "sample_lib",    "name": "Samples Folder", "type": "enum", "options": ["(empty)"]},
-      {"key": "bank_a",        "name": "Bank A",     "type": "enum",  "options": ["(empty)"]},
-      {"key": "bank_b",        "name": "Bank B",     "type": "enum",  "options": ["(empty)"]},
-      {"key": "ab_mix",        "name": "A Mix B",    "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "pitch",         "name": "Pitch",      "type": "int",   "min": -24, "max": 24, "step": 1},
-      {"key": "tone",          "name": "Tone",       "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "env_preset",    "name": "Envelope",   "type": "enum",  "options": ["Tape Organ","Strings","Slow Pad","Choir Swell","Pluck","Stab","Bowed Swell","Gate","Reverse Swell","Staccato","Drone","Soft Keys","Cinematic Rise","Pluck Bass","Soft Lead","Pad Wash","Marcato","Hammer","Vox Ahh","Brass Hit","Slow Drone","Pizzicato","Custom"]},
-      {"key": "crunch",        "name": "Crunch",     "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "volume",        "name": "Volume",     "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "env_a",         "name": "Attack",     "type": "float", "min": 0,   "max": 5,  "step": 0.01},
-      {"key": "env_d",         "name": "Decay",      "type": "float", "min": 0,   "max": 3,  "step": 0.01},
-      {"key": "env_s",         "name": "Sustain",    "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "env_r",         "name": "Release",    "type": "float", "min": 0,   "max": 5,  "step": 0.01},
-      {"key": "env_ac",        "name": "Atk Curve",  "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "env_rc",        "name": "Rel Curve",  "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "env_vel",       "name": "Velocity",   "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "tape_style",    "name": "Tape Style", "type": "enum",  "options": ["Off","Clean","M400","MkII","M300","Worn"]},
-      {"key": "warble",        "name": "Warble",     "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "flutter",       "name": "Flutter",    "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "degrade",       "name": "Degrade",    "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "tape_sat",      "name": "Saturation", "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "preamp_model",  "name": "Preamp",     "type": "enum",  "options": ["Off","Clean DI","MkII Tube","M400 Solid-State","SK-1 Lo-fi"]},
-      {"key": "input_level",   "name": "Input",      "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "limiter",       "name": "Limiter",    "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "tape_len",      "name": "Tape Len",   "type": "float", "min": 1,   "max": 16, "step": 0.5},
-      {"key": "chiff",         "name": "Chiff",      "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "vibrato",       "name": "Vibrato",    "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "rotary",        "name": "Rotary",     "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "dj_filter",     "name": "DJ Filter",  "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "tremolo",       "name": "Tremolo",    "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "autowah",       "name": "Auto-Wah",   "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "texture",       "name": "Texturizer", "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "delay",         "name": "Delay",      "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "reverb",        "name": "Reverb",     "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "fx_chain",      "name": "FX Chain",   "type": "enum",  "options": ["Classic","Pedalboard","Wet Swirl","Ambient Wash","Dub","Reverse","Frippertronics","Wall of Orchestra","Loop Chaos","Dirty Cabinet"]},
-      {"key": "map_mode",      "name": "Map Mode",   "type": "enum",  "options": ["Tape (exact)","Full range (stretched)"]},
-      {"key": "loop_mode",     "name": "Loop Mode",  "type": "enum",  "options": ["Tape (no loop)","Sustain (loop)"]},
-      {"key": "half_speed",    "name": "Half Speed", "type": "enum",  "options": ["Off","On"]},
-      {"key": "xfade_pct",     "name": "Crossfade %","type": "int",   "min": 0,   "max": 100,"step": 1},
-      {"key": "auto_retune",   "name": "Auto Retune","type": "enum",  "options": ["Off","On"]},
-      {"key": "seq_base",      "name": "Seq Base",   "type": "int",   "min": -1,  "max": 127,"step": 1},
-      {"key": "reverse",       "name": "Reverse",    "type": "enum",  "options": ["Off","On"]},
-      {"key": "sample_start",  "name": "Sample Start","type": "float","min": 0,   "max": 1,  "step": 0.01},
-      {"key": "bias",          "name": "Bias",       "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "mech",          "name": "Mech Noise", "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "dist_style",    "name": "Dist Style", "type": "enum",  "options": ["Tube","Fuzz","Crimson","Wavefold","Bitcrush","Spiral","RAT"]},
-      {"key": "dist_drive",    "name": "Dist Drive", "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "dist_tone",     "name": "Dist Tone",  "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "dist_blend",    "name": "Dist Blend", "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "dist_position", "name": "Dist Position","type": "enum","options": ["Pre","In-Loop","Post"]},
-      {"key": "delay_type",    "name": "Delay Type", "type": "enum",  "options": ["Tape","Magnetic","Space"]},
-      {"key": "fripp_time",    "name": "Fripp Time", "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "fripp_fb",      "name": "Fripp Feedback","type": "float", "min": 0,"max": 1,  "step": 0.01},
-      {"key": "fripp_age",     "name": "Fripp Age",  "type": "float", "min": 0,   "max": 1,  "step": 0.01},
-      {"key": "fripp_mix",     "name": "Fripp Mix",  "type": "float", "min": 0,   "max": 1,  "step": 0.01}
+      {"key": "sample_lib", "name": "Samples Folder", "short_name": "Folder", "type": "enum", "options": ["(empty)"]},
+      {"key": "bank_a", "name": "Bank A", "type": "enum", "options": ["(empty)"]},
+      {"key": "bank_b", "name": "Bank B", "type": "enum", "options": ["(empty)"]},
+      {"key": "ab_mix", "name": "A Mix B", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "pitch", "name": "Pitch", "type": "int", "min": -24, "max": 24, "step": 1},
+      {"key": "tone", "name": "Tone", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "env_preset", "name": "Envelope", "type": "enum", "options": ["Tape Organ", "Strings", "Slow Pad", "Choir Swell", "Pluck", "Stab", "Bowed Swell", "Gate", "Reverse Swell", "Staccato", "Drone", "Soft Keys", "Cinematic Rise", "Pluck Bass", "Soft Lead", "Pad Wash", "Marcato", "Hammer", "Vox Ahh", "Brass Hit", "Slow Drone", "Pizzicato", "Custom"], "short_options": ["Orgn", "Strg", "SPad", "Chor", "Plck", "Stab", "Bowd", "Gate", "RvSw", "Stac", "Drne", "Keys", "Cine", "PBas", "Lead", "Wash", "Marc", "Hamr", "Vox", "Bras", "SDrn", "Pizz", "Cust"]},
+      {"key": "crunch", "name": "Crunch", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "volume", "name": "Volume", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%", "viz": {"kind": "fader"}},
+      {"key": "env_a", "name": "Attack", "type": "float", "min": 0, "max": 5, "step": 0.01, "unit": "sec", "viz": {"group": "amp", "role": "attack"}},
+      {"key": "env_d", "name": "Decay", "type": "float", "min": 0, "max": 3, "step": 0.01, "unit": "sec", "viz": {"group": "amp", "role": "decay"}},
+      {"key": "env_s", "name": "Sustain", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%", "viz": {"group": "amp", "role": "sustain"}},
+      {"key": "env_r", "name": "Release", "type": "float", "min": 0, "max": 5, "step": 0.01, "unit": "sec", "viz": {"group": "amp", "role": "release"}},
+      {"key": "env_ac", "name": "Atk Curve", "short_name": "A Crv", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "env_rc", "name": "Rel Curve", "short_name": "R Crv", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "env_vel", "name": "Velocity", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "tape_style", "name": "Tape Style", "short_name": "Style", "type": "enum", "options": ["Off", "Clean", "M400", "MkII", "M300", "Worn"], "short_options": ["Off", "Cln", "M400", "MkII", "M300", "Worn"]},
+      {"key": "warble", "name": "Warble", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "flutter", "name": "Flutter", "short_name": "Flutr", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "degrade", "name": "Degrade", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "tape_sat", "name": "Saturation", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "preamp_model", "name": "Preamp", "short_name": "Amp", "type": "enum", "options": ["Off", "Clean DI", "MkII Tube", "M400 Solid-State", "SK-1 Lo-fi"], "short_options": ["Off", "DI", "Tube", "SS", "SK-1"]},
+      {"key": "input_level", "name": "Input", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%", "viz": {"kind": "fader"}},
+      {"key": "limiter", "name": "Limiter", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "tape_len", "name": "Tape Len", "short_name": "Len", "type": "float", "min": 1, "max": 16, "step": 0.5, "unit": "sec"},
+      {"key": "chiff", "name": "Chiff", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "vibrato", "name": "Vibrato", "short_name": "Vib", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "rotary", "name": "Rotary", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "dj_filter", "name": "DJ Filter", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "tremolo", "name": "Tremolo", "short_name": "Trem", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "autowah", "name": "Auto-Wah", "short_name": "Wah", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "texture", "name": "Texturizer", "short_name": "Grain", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "delay", "name": "Delay", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "reverb", "name": "Reverb", "short_name": "Verb", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "fx_chain", "name": "FX Chain", "short_name": "Chain", "type": "enum", "options": ["Classic", "Pedalboard", "Wet Swirl", "Ambient Wash", "Dub", "Reverse", "Frippertronics", "Wall of Orchestra", "Loop Chaos", "Dirty Cabinet"], "short_options": ["Clas", "Pedl", "Swrl", "Amb", "Dub", "Rev", "Frip", "Wall", "Chos", "Cab"]},
+      {"key": "map_mode", "name": "Map Mode", "short_name": "Map", "type": "enum", "options": ["Tape (exact)", "Full range (stretched)"], "short_options": ["Tape", "Full"]},
+      {"key": "loop_mode", "name": "Loop Mode", "short_name": "Loop", "type": "enum", "options": ["Tape (no loop)", "Sustain (loop)"], "short_options": ["Once", "Loop"]},
+      {"key": "half_speed", "name": "Half Speed", "short_name": "Half", "type": "enum", "options": ["Off", "On"], "viz": {"kind": "switch"}},
+      {"key": "xfade_pct", "name": "Crossfade", "short_name": "Xfade", "type": "int", "min": 0, "max": 100, "step": 1, "unit": "%"},
+      {"key": "auto_retune", "name": "Auto Retune", "short_name": "Retune", "type": "enum", "options": ["Off", "On"], "viz": {"kind": "switch"}},
+      {"key": "seq_base", "name": "Seq Base", "short_name": "Base", "type": "int", "min": -1, "max": 127, "step": 1},
+      {"key": "reverse", "name": "Reverse", "short_name": "Rev", "type": "enum", "options": ["Off", "On"], "viz": {"kind": "switch"}},
+      {"key": "sample_start", "name": "Sample Start", "short_name": "Start", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "bias", "name": "Bias", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "mech", "name": "Mech Noise", "short_name": "Mech", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "dist_style", "name": "Dist Style", "short_name": "Style", "type": "enum", "options": ["Tube", "Fuzz", "Crimson", "Wavefold", "Bitcrush", "Spiral", "RAT"], "short_options": ["Tube", "Fuzz", "Crim", "Fold", "Crsh", "Sprl", "RAT"]},
+      {"key": "dist_drive", "name": "Dist Drive", "short_name": "Drive", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "dist_tone", "name": "Dist Tone", "short_name": "Tone", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "dist_blend", "name": "Dist Blend", "short_name": "Blend", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "dist_position", "name": "Dist Position", "short_name": "D Pos", "type": "enum", "options": ["Pre", "In-Loop", "Post"], "short_options": ["Pre", "Loop", "Post"]},
+      {"key": "delay_type", "name": "Delay Type", "short_name": "Type", "type": "enum", "options": ["Tape", "Magnetic", "Space"], "short_options": ["Tape", "Mag", "Spce"]},
+      {"key": "fripp_time", "name": "Fripp Time", "short_name": "Time", "type": "float", "min": 0, "max": 1, "step": 0.01},
+      {"key": "fripp_fb", "name": "Fripp Feedback", "short_name": "Fdbk", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "fripp_age", "name": "Fripp Age", "short_name": "Age", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"},
+      {"key": "fripp_mix", "name": "Fripp Mix", "short_name": "Mix", "type": "float", "min": 0, "max": 1, "step": 0.01, "unit": "%"}
     ]
   },
   "assets": {
     "path": "instruments",
     "label": "Sample Libraries",
-    "extensions": [".wav"],
+    "extensions": [
+      ".wav"
+    ],
     "description": "Drop WAV sample banks under instruments/<library>/<bank>/. One note per file; filenames can be note names (A2.wav, C#3.wav), MIDI numbers (60.wav), or sequential (MyBank-8.wav). Three free Mellotron libraries are supported out of the box: MT (MellowTrawn/Leisureland), SB (Sonic Bloom), 90 (90s Archive CD).",
     "hint": "Find the free MellowTrawn/Leisureland Mellotron samples at",
     "hint_url": "http://www.leisureland.us/mellotron.htm",

@@ -9,21 +9,30 @@ Supersedes the original Mello. **Read `design-spec.md` first** — full architec
   files from `instruments/<library>/<bank>/`, parses the MIDI note from the filename,
   plays per-voice with linear interpolation. The simple "play this WAV when this key is
   pressed" semantics Mello needs don't warrant a vendored sampler engine.
-- **Five pages × 8 knobs** (jog-wheel page switch): **Main · FX 1 · FX 2 · Envelope ·
-  Tape & Preamp**.
+- **Nine Knob Grid pages** (jog-wheel page switch, Schwung 1.7.3): **Main · Envelope ·
+  FX 1 · FX 2 · FX Settings · Tape · Tape-2 · Sample · Setup** — live pages first, setup
+  pages last. Envelope knobs 1–4 = A/D/S/R (drawn as one envelope graphic via `viz`),
+  knob 8 = Env preset.
 
 ## Repo structure
-- `src/dsp/mello.c` — plugin: API, voice manager, 5-page UI, tape, preamp, tone,
+- `src/dsp/mello.c` — plugin: API, voice manager, tape, preamp, tone,
   FX 1 (8 macros), FX 2 (7-style distortion + 3-voicing Frippertronics tape delay),
   10 FX-chain routings, async bank loader, auto-retune, pitch-bend/mod-wheel, limiter,
   master. **~3,900 lines, single file.**
 - `src/dsp/wav_bank.{c,h}` — 16-bit PCM WAV loader + folder scanner + filename→MIDI
   parser (note-name, bare-MIDI, **Leisureland sequential `*-N.wav`**) + autocorrelation
   pitch detection for Auto-Retune + per-bank peak-normalise (`bank_gain`).
-- `src/module.json` — metadata + ui_hierarchy (5 levels) + chain_params (**55 params**).
-  DSP serves a dynamic `chain_params` via `get_param("chain_params")` so the `sample_lib`,
-  `bank_a` and `bank_b` enums reflect the scanned `instruments/<library>/<bank>/` tree at
-  runtime.
+- `src/module.json` — metadata + ui_hierarchy (8 levels + root, `pad_layout: chromatic`)
+  + chain_params (**55 params**, with `short_name` / `short_options` / `unit` / `viz` for
+  the Knob Grid). DSP serves a dynamic `chain_params` via `get_param("chain_params")` so
+  the `sample_lib`, `bank_a` and `bank_b` enums reflect the scanned
+  `instruments/<library>/<bank>/` tree at runtime.
+- **The DSP serves its own copies** of `ui_hierarchy` (`UI_HIERARCHY`) and of the static
+  chain_params (`STATIC_PARAMS` in `build_chain_params_json`) — a sound generator's
+  `module.json` hierarchy is never read by the host. Edit `module.json` first, then make
+  both C literals byte-identical to it (minified). Keep the cell labels to the grid's
+  ~5-character budget (check with schwung `render_page_movy.mjs` `labelForCell`) and enum
+  `short_options` to ≤ 4 characters.
 - `instruments/` — **two-tier**: `instruments/<library>/<bank>/*.wav`. Top-level folders
   are libraries (MT, SB, 90, …); each holds bank subfolders. The Main-page "Samples
   Folder" param (`sample_lib`) switches library; `bank_a`/`bank_b` list every bank across
